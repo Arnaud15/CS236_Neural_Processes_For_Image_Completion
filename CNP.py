@@ -54,7 +54,6 @@ def random_sampling(batch, grid, h=28, w=28):
     mask = (mask >= ps).float()  # bsize * 784
 
     grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
-
     return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
 
 
@@ -78,7 +77,7 @@ def train(context_encoder, target_network, train_loader, optimizer, n_epochs, de
         running_loss = 0.0
         last_log_time = time.time()
         for batch_idx, (batch, _) in enumerate(train_loader):
-
+            batch = batch.to(device)
             if ((batch_idx % 100) == 0) and batch_idx > 1:
                 print("epoch {} | batch {} | mean running loss {:.2f} | {:.2f} batch/s".format(epoch, batch_idx,
                                                                                                running_loss / 100,
