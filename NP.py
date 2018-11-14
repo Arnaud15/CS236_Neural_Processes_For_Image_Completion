@@ -51,10 +51,10 @@ def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder
     file_path = os.path.join(models_path, model_name)
     if not os.path.exists(models_path):
         os.makedirs(models_path)
-    dict = {"encoder": encoder.get_state_dict(),
+    model_states_dict = {"encoder": encoder.get_state_dict(),
             "context_to_latent_dist": context_to_latent_dist.get_state_dict(),
             "decoder": decoder.get_state_dict()}
-    torch.save(dict, file_path)
+    torch.save(model_states_dict, file_path)
     print('Saved state dicts to {}'.format(file_path))
 
 
