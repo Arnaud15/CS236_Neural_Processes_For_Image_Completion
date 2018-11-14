@@ -19,7 +19,7 @@ class ContextEncoder(nn.Module):
     def forward(self, x):
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
-        return torch.mean(self.layer3(x), dim=1)
+        return self.layer3(x)
 
 
 class TargetNetwork(nn.Module):
@@ -36,40 +36,48 @@ class TargetNetwork(nn.Module):
         return x  # out0 = mu, out1 = log( sigma 2) for input context + x1, x2
 
 
-def random_sampling(batch):
-    N = np.random.randint(1, 785)
-    batch_size = batch.shape[0]
-    batch_context = []
-    for k in range(batch_size):
-        random_indices = torch.randint(0, 28, size=(N, 2)).long()
-        train_X = random_indices.float() / 27
-        train_Y = batch[k][0][random_indices[:, 0], random_indices[:, 1]]
-        context_data = torch.cat((train_X, train_Y.view(N, 1)), dim=1)
-        batch_context.append(context_data)
-    batch_context = torch.stack(batch_context, dim=0)
-    full_Y = batch.transpose(2, 3).contiguous().view(batch_size, 784)
-    return batch_context, full_Y
+def random_sampling(batch, grid, h=28, w=28):
+    '''
+
+    :param batch:
+    :param grid:
+    :param h:
+    :param w:
+    :return: encoder_input size (bsize,784,3) , mask size (bsize,784)
+    '''
+    # batch bsize * 1 * 28 * 28
+    batch_size = batch.size(0)
+
+    batch = batch.view(batch_size, -1)  # bsize * 784
+    ps = torch.rand(batch_size).unsqueeze(1).expand(batch_size, h * w)
+    mask = torch.rand(batch.size())
+    mask = (mask >= ps).float()  # bsize * 784
+
+    grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
+
+    return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
 
 
-def loss_function(distribution_params, full_Y):
+def loss_function(distribution_params, target_image):
     mu, logvar = distribution_params[:, :, 0], distribution_params[:, :, 1]
-    loss = torch.sum((full_Y - mu).pow(2) / (2 * logvar.exp()) + 0.5 * logvar)
+    loss = ((target_image - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2 * np.pi)).sum(dim=1).mean()
     return loss
 
 
-def train(context_encoder, target_network, train_loader, optimizer, n_epochs, device, batch_size):
+def train(context_encoder, target_network, train_loader, optimizer, n_epochs, device, batch_size, h=28, w=28):
     context_encoder.train()
     target_network.train()
-    full_range = np.linspace(0, 1, num=28)
-    full_X = np.transpose([np.tile(full_range, 28), np.repeat(full_range, 28)])
-    full_X = np.repeat(full_X[np.newaxis, :, :], batch_size, axis=0)
-    full_X = torch.from_numpy(full_X)
-    full_X = full_X.to(device).float()
+    xs = np.linspace(0, 1, h)
+    ys = np.linspace(0, 1, w)
+    xx, yy = np.meshgrid(xs, ys)
+    grid = torch.tensor(np.stack([xx, yy], axis=-1)).float().to(device).view(h * w, 2)  # size 784*2
+
     for epoch in range(n_epochs):
         epoch_loss = 0.0
         running_loss = 0.0
         last_log_time = time.time()
         for batch_idx, (batch, _) in enumerate(train_loader):
+
             if ((batch_idx % 100) == 0) and batch_idx > 1:
                 print("epoch {} | batch {} | mean running loss {:.2f} | {:.2f} batch/s".format(epoch, batch_idx,
                                                                                                running_loss / 100,
@@ -78,13 +86,22 @@ def train(context_encoder, target_network, train_loader, optimizer, n_epochs, de
                 last_log_time = time.time()
                 running_loss = 0.0
 
-            context_data, full_Y = random_sampling(batch)
-            context_data, full_Y = context_data.to(device), full_Y.to(device)
-            aggregated_context_embedding = context_encoder.forward(context_data)
-            aggregated_context_embedding = aggregated_context_embedding.view(batch_size, 1, -1).expand(-1, 784, -1)
-            target_input = torch.cat((aggregated_context_embedding, full_X), dim=2)
+            context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
+            # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
+
+            context_full = context_encoder(context_data)  # size bsize,h with h =hidden size
+
+            mask = mask.unsqueeze(-1)
+            r_masked = (context_full * mask).sum(dim=1) / (1 + mask.sum(dim=1))  # bsize * hidden_size
+            r_full = context_full.mean(dim=1)
+
+            # resize context to have one context per input coordinate
+            r_masked = r_masked.unsqueeze(1).expand(-1, h * w, -1)
+            grid_input = grid.unsqueeze(0).expand(batch_size, -1, -1)
+            target_input = torch.cat([r_masked, grid_input], dim=-1)  # TODO Check
+
             distribution_params = target_network.forward(target_input)
-            loss = loss_function(distribution_params, full_Y)
+            loss = loss_function(distribution_params, batch.view(batch_size, h * w))
 
             optimizer.zero_grad()
             loss.backward()
