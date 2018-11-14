@@ -7,6 +7,7 @@ from torchvision.utils import save_image
 import numpy as np
 import os
 import time
+from argparse import ArgumentParser
 
 
 class ContextEncoder(nn.Module):
@@ -46,14 +47,22 @@ class Decoder(nn.Module):
         return torch.sigmoid(x)  # for mnist
 
 
-def save_model(model, epoch):
-    save_dir = os.path.join('checkpoints', 'NPMNIST')
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    file_path = os.path.join(save_dir, 'model-{:05d}.pt'.format(epoch))
-    state = model.state_dict()
-    torch.save(state, file_path)
-    print('Saved to {}'.format(file_path))
+def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder):
+    file_path = os.path.join(models_path, model_name)
+    if not os.path.exists(models_path):
+        os.makedirs(models_path)
+    dict = {"encoder": encoder.get_state_dict(),
+            "context_to_latent_dist": context_to_latent_dist.get_state_dict(),
+            "decoder": decoder.get_state_dict()}
+    torch.save(dict, file_path)
+    print('Saved state dicts to {}'.format(file_path))
+
+
+def load_models(file_path, encoder, context_to_latent_dist, decoder):
+    dict = torch.load(file_path)
+    encoder.load_state_dict(dict["encoder"])
+    context_to_latent_dist.load_state_dict(dict["context_to_latent_dist"])
+    decoder.load_state_dict(dict["decoder"])
 
 
 def random_sampling(batch, grid, h=28, w=28):
@@ -78,21 +87,6 @@ def random_sampling(batch, grid, h=28, w=28):
     return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
 
 
-#
-# def loss_function(context_full, context_masked, target_image):
-#     mu, logvar = distribution_params[:, :, 0], distribution_params[:, :, 1]
-#     loss = ((target_image - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2 * np.pi)).mean()
-#
-#     z_params_full = context_encoder.z_params_from_r(r_full)
-#     z_full = sample_z(z_params_full, device)
-#     image_distribution_full = target_network(z_full)
-#     reconstruct = (log_reconstruct(context_data[:, :, 0], image_distribution_full) * (1. - mask)).sum(dim=1).mean()
-#     kl = kl_normal(z_params_full, context_encoder.z_params_from_r(r_masked)).mean()
-#     return reconstruct + kl
-#
-#     return loss
-
-
 def kl_normal(params1, params2):
     mu1, var1 = params1
     var1 = var1.exp()
@@ -111,7 +105,8 @@ def sample_z(z_params):
     return z
 
 
-def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_epochs, device, batch_size, h=28,
+def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_epochs, device, batch_size, save_path,
+          h=28,
           w=28):
     context_encoder.train()
     decoder.train()
@@ -174,15 +169,13 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
         if (epoch + 1) % 10 == 0:
             save_model(epoch + 1)
 
-        print("Epoch loss : {}".format(epoch_loss))
+        print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
     return
 
 
-def main():
+def main(args):
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
-
-    batch_size = 32
 
     train_loader = torch.utils.data.DataLoader(
 
@@ -191,24 +184,34 @@ def main():
                            transforms.ToTensor(),
                            transforms.Lambda(lambda x: (x > .5).float())
                        ])),
-        batch_size=batch_size, shuffle=True)
+        batch_size=args.bsize, shuffle=True)
 
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, transform=transforms.Compose([
             transforms.ToTensor(),
             transforms.Lambda(lambda x: (x > .5).float())
         ])),
-        batch_size=batch_size, shuffle=True)
+        batch_size=args.bsize, shuffle=True)
 
     context_encoder = ContextEncoder().to(device)
     context_to_dist = ContextToLatentDistribution().to(device)
     decoder = Decoder().to(device)
+
     full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
         context_to_dist.parameters())
-    optimizer = optim.Adam(full_model_params, lr=1e-3)
+    optimizer = optim.Adam(full_model_params, lr=args.lr)
 
-    train(context_encoder, context_to_dist, decoder, train_loader, optimizer, 10, device, batch_size)
+    train(context_encoder, context_to_dist, decoder, train_loader, optimizer, args.epochs, device, args.bsize,
+          args.models_path)
 
+
+parser = ArgumentParser()
+parser.add_argument("--models_path", type=str, default="models/")
+parser.add_argument("--save_model", type=int, default=1)
+parser.add_argument("--lr", type=float, default=1e-3)
+parser.add_argument("--epochs", type=int, default=10)
+parser.add_argument("--bsize", type=int, default=32)
 
 if __name__ == '__main__':
-    main()
+    args = parser.parse_args()
+    main(args)
