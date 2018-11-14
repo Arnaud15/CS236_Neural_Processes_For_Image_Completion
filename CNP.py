@@ -60,7 +60,7 @@ def random_sampling(batch, grid, h=28, w=28):
 
 def loss_function(distribution_params, target_image):
     mu, logvar = distribution_params[:, :, 0], distribution_params[:, :, 1]
-    loss = ((target_image - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2 * np.pi)).sum(dim=1).mean()
+    loss = ((target_image - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2 * np.pi)).mean()
 
     return loss
 
@@ -139,7 +139,7 @@ def main():
     context_encoder = ContextEncoder().to(device)
     target_network = TargetNetwork().to(device)
     full_model_params = list(context_encoder.parameters()) + list(target_network.parameters())
-    optimizer = optim.RMSprop(full_model_params, lr=0.0001, momentum=0.05)
+    optimizer = optim.Adam(full_model_params, lr=1e-3)
 
     train(context_encoder, target_network, train_loader, optimizer, 10, device, batch_size)
 
