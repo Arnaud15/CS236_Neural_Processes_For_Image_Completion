@@ -115,6 +115,8 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
         last_log_time = time.time()
         for batch_idx, (batch, _) in enumerate(train_loader):
 
+            batch = batch.to(device)
+
             if ((batch_idx % 100) == 0) and batch_idx > 1:
                 print("epoch {} | batch {} | mean running loss {:.2f} | {:.2f} batch/s".format(epoch, batch_idx,
                                                                                                running_loss / 100,
@@ -167,17 +169,17 @@ def main():
     batch_size = 32
 
     train_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('../data', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ])),
-        batch_size=batch_size, shuffle=True)
+    datasets.MNIST('../data', train=True, download=True,
+                   transform=transforms.Compose([
+                       transforms.ToTensor(),
+                       transforms.Lambda(lambda x: (x > .5).float())
+                   ])),
+    batch_size=batch_size, shuffle=True)
 
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, transform=transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            transforms.Lambda(lambda x: (x > .5).float())
         ])),
         batch_size=batch_size, shuffle=True)
 

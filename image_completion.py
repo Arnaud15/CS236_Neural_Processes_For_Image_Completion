@@ -13,17 +13,22 @@ def complete_full_image(decoder, context, grid):
     # resize context to have one context per input coordinate
     grid_input = grid.unsqueeze(0).expand(batch_size, -1, -1)
     target_input = torch.cat([z, grid_input], dim=-1)
-    return decoder(target_input)
+    return decoder.forward(target_input)
 
 def complete_pixel(decoder, context, pixel):
     z = context.unsqueeze(1).expand(-1, h * w, -1)
     target_input = torch.cat([z, pixel], dim=-1)
-    return decoder(target_input)
+    return decoder.forward(target_input)
 
-def constant_completion(batch, encoder, encoder_to_distrib, decoder, initial_pixels):
+def constant_completion(batch, encoder, encoder_to_distrib, decoder, initial_pixels, h=28, w=28):
     '''
-        Image completion is implemented by batch (we complete a batch of images at once!).
+    Image completion is implemented by batch (we complete a batch of images at once!).
     '''
+
+    xs = np.linspace(0, 1, h)
+    ys = np.linspace(0, 1, w)
+    xx, yy = np.meshgrid(xs, ys)
+    grid = torch.tensor(np.stack([xx, yy], axis=-1)).float().to(device).view(h * w, 2)  # size 784*2
 
     # initial_pixels: n_initial_pixels * 2
     context_values = batch[:,initial_pixels]
@@ -40,13 +45,8 @@ def constant_completion(batch, encoder, encoder_to_distrib, decoder, initial_pix
     aggregated_context = context.mean(axis=1) # dimension: batch_size * hidden (one context per image)
     z = NP.sample_z(aggregated_context)
 
-    # build input tensor of decoder network
-    grid_input = grid.unsqueeze(0).expand(bsatch_size, -1, -1)
-    decoder_input = torch.cat([z, grid_input], dim=-1)
-
-    # complete entire image
-    completed_image = decoder().forward(decoder_input)
-
+    image_probs = complete_full_image(decoder, context, grid)
+    completed_image = torch.bernoulli(image_probs)
     return completed_image
 
 def main():
