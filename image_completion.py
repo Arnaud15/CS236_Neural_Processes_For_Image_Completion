@@ -54,7 +54,7 @@ def main():
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
 
-    batch_size = 1
+    batch_size = 32
 
     context_encoder = torch.load("models/context_encoder").to(device)
     context_to_dist = torch.load("models/context_to_dist").to(device)
