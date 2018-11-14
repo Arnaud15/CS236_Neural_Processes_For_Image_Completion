@@ -51,9 +51,9 @@ def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder
     file_path = os.path.join(models_path, model_name)
     if not os.path.exists(models_path):
         os.makedirs(models_path)
-    model_states_dict = {"encoder": encoder.get_state_dict(),
-                         "context_to_latent_dist": context_to_latent_dist.get_state_dict(),
-                         "decoder": decoder.get_state_dict()}
+    model_states_dict = {"encoder": encoder.state_dict(),
+                         "context_to_latent_dist": context_to_latent_dist.state_dict(),
+                         "decoder": decoder.state_dict()}
     torch.save(model_states_dict, file_path)
     print('Saved state dicts to {}'.format(file_path))
 
@@ -168,7 +168,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             epoch_loss += loss.item()
 
         print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
-    save_model(args.models_path, "NP_{}_epoch".format(args.epochs), context_encoder, context_to_dist, decoder)
+    save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist, decoder)
     return
 
 
@@ -196,6 +196,9 @@ def main(args):
     context_to_dist = ContextToLatentDistribution().to(device)
     decoder = Decoder().to(device)
 
+    if args.resume_file is not None:
+        load_models(args.resume_file,context_encoder,context_to_dist,decoder)
+
     full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
         context_to_dist.parameters())
     optimizer = optim.Adam(full_model_params, lr=args.lr)
@@ -210,6 +213,7 @@ parser.add_argument("--save_model", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--bsize", type=int, default=32)
+parser.add_argument("--resume_file",type=str,default=None)
 
 if __name__ == '__main__':
     args = parser.parse_args()
