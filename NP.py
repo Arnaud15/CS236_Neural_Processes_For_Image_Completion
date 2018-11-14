@@ -45,6 +45,14 @@ class Decoder(nn.Module):
         x = self.layer3(x)
         return F.sigmoid(x)  # for mnist
 
+def save_model(model, epoch):
+    save_dir = os.path.join('checkpoints', 'NPMNIST')
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    file_path = os.path.join(save_dir, 'model-{:05d}.pt'.format(epoch))
+    state = model.state_dict()
+    torch.save(state, file_path)
+    print('Saved to {}'.format(file_path))
 
 def random_sampling(batch, grid, h=28, w=28):
     '''
@@ -158,6 +166,9 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             # add loss
             running_loss += loss.item()
             epoch_loss += loss.item()
+        if (epoch  + 1) % 10 == 0:
+            save_model(epoch + 1)
+
         print("Epoch loss : {}".format(epoch_loss))
     return
 
