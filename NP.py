@@ -1,237 +1,195 @@
-import argparse
 import torch
 import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
-import random
-
-parser = argparse.ArgumentParser(description='Neural Processes (NP) for MNIST image completion')
-parser.add_argument('--batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for training')
-parser.add_argument('--epochs', type=int, default=300, metavar='N',
-                    help='number of epochs to train')
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='disables CUDA training')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
-                    help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=1, metavar='N',
-                    help='how many batches to wait before logging training status')
-parser.add_argument('--r_dim', type=int, default=128, metavar='N',
-                    help='dimension of r, the hidden representation of the context points')
-parser.add_argument('--z_dim', type=int, default=128, metavar='N',
-                    help='dimension of z, the global latent variable')
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
-
-torch.manual_seed(args.seed)
-random.seed(args.seed)
-device = torch.device("cuda" if args.cuda else "cpu")
-
-kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
-
-train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=True, download=True,
-                   transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
+import numpy as np
+import os
+import time
 
 
-def get_context_idx(N):
-    # generate the indeces of the N context points in a flattened image
-    idx = random.sample(range(0, 784), N)
-    idx = torch.tensor(idx, device=device)
-    return idx
+class ContextEncoder(nn.Module):
+    def __init__(self):
+        super(ContextEncoder, self).__init__()
+        self.layer1 = nn.Linear(3, 128)
+        self.layer2 = nn.Linear(128, 128)
+        self.layer3 = nn.Linear(128, 64)
+
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        return self.layer3(x)
 
 
-def generate_grid(h, w):
-    rows = torch.linspace(0, 1, h, device=device)
-    cols = torch.linspace(0, 1, w, device=device)
-    grid = torch.stack([cols.repeat(h, 1).t().contiguous().view(-1), rows.repeat(w)], dim=1)
-    grid = grid.unsqueeze(0)
-    return grid
+class ContextToLatentDistribution(nn.Module):
+    def __init__(self):
+        super(ContextToLatentDistribution, self).__init__()
+        self.mu_layer = nn.Linear(64, 64)
+        self.logvar_layer = nn.Linear(64, 64)
+
+    def forward(self, x):
+        return self.mu_layer(x), self.logvar_layer(x)
 
 
-def idx_to_y(idx, data):
-    # get the [0;1] pixel intensity at each index
-    y = torch.index_select(data, dim=1, index=idx)
-    return y
+class Decoder(nn.Module):
+    def __init__(self):
+        super(Decoder, self).__init__()
+        self.layer1 = nn.Linear(64 + 2, 32)
+        self.layer2 = nn.Linear(32, 16)
+        self.layer3 = nn.Linear(16, 1)
+
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = self.layer3(x)
+        return F.sigmoid(x)  # for mnist
 
 
-def idx_to_x(idx, batch_size):
-    # From flat idx to 2d coordinates of the 28x28 grid. E.g. 35 -> (1, 7)
-    # Equivalent to np.unravel_index()
-    x = torch.index_select(x_grid, dim=1, index=idx)
-    x = x.expand(batch_size, -1, -1)
-    return x
+def random_sampling(batch, grid, h=28, w=28):
+    '''
+
+    :param batch:
+    :param grid:
+    :param h:
+    :param w:
+    :return: encoder_input size (bsize,784,3) , mask size (bsize,784)
+    '''
+    # batch bsize * 1 * 28 * 28
+    batch_size = batch.size(0)
+
+    batch = batch.view(batch_size, -1)  # bsize * 784
+    ps = torch.rand(batch_size, device=batch.device).unsqueeze(1).expand(batch_size, h * w)
+    mask = torch.rand(batch.size(), device=batch.device)
+    mask = (mask >= ps).float()  # bsize * 784
+
+    grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
+
+    return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
+
+#
+# def loss_function(context_full, context_masked, target_image):
+#     mu, logvar = distribution_params[:, :, 0], distribution_params[:, :, 1]
+#     loss = ((target_image - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2 * np.pi)).mean()
+#
+#     z_params_full = context_encoder.z_params_from_r(r_full)
+#     z_full = sample_z(z_params_full, device)
+#     image_distribution_full = target_network(z_full)
+#     reconstruct = (log_reconstruct(context_data[:, :, 0], image_distribution_full) * (1. - mask)).sum(dim=1).mean()
+#     kl = kl_normal(z_params_full, context_encoder.z_params_from_r(r_masked)).mean()
+#     return reconstruct + kl
+#
+#     return loss
 
 
-class NP(nn.Module):
-    def __init__(self, args):
-        super(NP, self).__init__()
-        self.r_dim = args.r_dim
-        self.z_dim = args.z_dim
-
-        self.h_1 = nn.Linear(3, 400)
-        self.h_2 = nn.Linear(400, 400)
-        self.h_3 = nn.Linear(400, self.r_dim)
-
-        self.r_to_z_mean = nn.Linear(self.r_dim, self.z_dim)
-        self.r_to_z_logvar = nn.Linear(self.r_dim, self.z_dim)
-
-        self.g_1 = nn.Linear(self.z_dim + 2, 400)
-        self.g_2 = nn.Linear(400, 400)
-        self.g_3 = nn.Linear(400, 400)
-        self.g_4 = nn.Linear(400, 400)
-        self.g_5 = nn.Linear(400, 1)
-
-    def h(self, x_y):
-        x_y = F.relu(self.h_1(x_y))
-        x_y = F.relu(self.h_2(x_y))
-        x_y = F.relu(self.h_3(x_y))
-        return x_y
-
-    def aggregate(self, r):
-        return torch.mean(r, dim=1)
-
-    def reparameterise(self, z):
-        mu, logvar = z
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        z_sample = eps.mul(std).add_(mu)
-        z_sample = z_sample.unsqueeze(1).expand(-1, 784, -1)
-        return z_sample
-
-    def g(self, z_sample, x_target):
-        z_x = torch.cat([z_sample, x_target], dim=2)
-        input = F.relu(self.g_1(z_x))
-        input = F.relu(self.g_2(input))
-        input = F.relu(self.g_3(input))
-        input = F.relu(self.g_4(input))
-        y_hat = torch.sigmoid(self.g_5(input))
-        return y_hat
-
-    def xy_to_z_params(self, x, y):
-        x_y = torch.cat([x, y], dim=2)
-        r_i = self.h(x_y)
-        r = self.aggregate(r_i)
-
-        mu = self.r_to_z_mean(r)
-        logvar = self.r_to_z_logvar(r)
-
-        return mu, logvar
-
-    def forward(self, x_context, y_context, x_all=None, y_all=None):
-        z_context = self.xy_to_z_params(x_context, y_context)  # (mu, logvar) of z
-        if self.training:  # loss function will try to keep z_context close to z_all
-            z_all = self.xy_to_z_params(x_all, y_all)
-        else:  # at test time we don't have the image so we use only the context
-            z_all = z_context
-
-        z_sample = self.reparameterise(z_all)
-
-        # reconstruct the whole image including the provided context points
-        x_target = x_grid.expand(y_context.shape[0], -1, -1)
-        y_hat = self.g(z_sample, x_target)
-
-        return y_hat, z_all, z_context
+def kl_normal(params1, params2):
+    mu1, var1 = params1
+    var1 = var1.exp()
+    mu2, var2 = params2
+    var2 = var2.exp()
+    element_wise = 0.5 * (torch.log(var2) - torch.log(var1) + var1 / var2 + (mu1 - mu2).pow(2) / var2 - 1)
+    kl = element_wise.sum(-1)
+    return kl
 
 
-def kl_div_gaussians(mu_q, logvar_q, mu_p, logvar_p):
-    var_p = torch.exp(logvar_p)
-    kl_div = (torch.exp(logvar_q) + (mu_q - mu_p) ** 2) / var_p \
-             - 1.0 \
-             + logvar_p - logvar_q
-    kl_div = 0.5 * kl_div.sum()
-    return kl_div
+def sample_z(z_params):
+    mu, var = z_params
+    var = var.exp()
+    sample = torch.randn(mu.shape).to(mu.device)
+    z = mu + (torch.sqrt(var) * sample)
+    return z
 
 
-def np_loss(y_hat, y, z_all, z_context):
-    BCE = F.binary_cross_entropy(y_hat, y, reduction="sum")
-    KLD = kl_div_gaussians(z_all[0], z_all[1], z_context[0], z_context[1])
-    return BCE + KLD
+def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_epochs, device, batch_size, h=28,
+          w=28):
+    context_encoder.train()
+    decoder.train()
+    xs = np.linspace(0, 1, h)
+    ys = np.linspace(0, 1, w)
+    xx, yy = np.meshgrid(xs, ys)
+    grid = torch.tensor(np.stack([xx, yy], axis=-1)).float().to(device).view(h * w, 2)  # size 784*2
+
+    for epoch in range(n_epochs):
+        epoch_loss = 0.0
+        running_loss = 0.0
+        last_log_time = time.time()
+        for batch_idx, (batch, _) in enumerate(train_loader):
+
+            if ((batch_idx % 100) == 0) and batch_idx > 1:
+                print("epoch {} | batch {} | mean running loss {:.2f} | {:.2f} batch/s".format(epoch, batch_idx,
+                                                                                               running_loss / 100,
+                                                                                               100 / (
+                                                                                                       time.time() - last_log_time)))
+                last_log_time = time.time()
+                running_loss = 0.0
+
+            context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
+            # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
+
+            context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
+
+            mask = mask.unsqueeze(-1)  # size bsize * 784 * 1
+            r_masked = (context_full * mask).sum(dim=1) / (1 + mask.sum(dim=1))  # bsize * hidden_size
+            r_full = context_full.mean(dim=1)
+
+            ## compute loss
+            z_params_full = context_to_dist(r_full)
+            z_params_masked = context_to_dist(r_masked)
+            z_full = sample_z(z_params_full)  # size bsize * hidden
+            z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
+
+            # resize context to have one context per input coordinate
+            grid_input = grid.unsqueeze(0).expand(batch_size, -1, -1)
+            target_input = torch.cat([z_full, grid_input], dim=-1)
+
+            reconstructed_image = decoder.forward(target_input)
+            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
+                                                          reduce=False) * (1 - mask)).sum(dim=1).mean()
+            kl_loss = kl_normal(z_params_full, z_params_masked).mean()
 
 
-model = NP(args).to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
-x_grid = generate_grid(28, 28)
+            loss = reconstruction_loss + kl_loss
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # add loss
+            running_loss += loss.item()
+            epoch_loss += loss.item()
+        print("Epoch loss : {}".format(epoch_loss))
+    return
 
 
-def train(epoch):
-    model.train()
-    train_loss = 0
-    for batch_idx, (y_all, _) in enumerate(train_loader):
-        batch_size = y_all.shape[0]
-        y_all = y_all.to(device).view(batch_size, -1, 1)
+def main():
+    use_cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if use_cuda else "cpu")
 
-        N = random.randint(1, 784)  # number of context points
-        context_idx = get_context_idx(N)
-        x_context = idx_to_x(context_idx, batch_size)
-        y_context = idx_to_y(context_idx, y_all)
-        x_all = x_grid.expand(batch_size, -1, -1)
+    batch_size = 32
 
-        optimizer.zero_grad()
-        y_hat, z_all, z_context = model(x_context, y_context, x_all, y_all)
+    train_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('../data', train=True, download=True,
+                       transform=transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.1307,), (0.3081,))
+                       ])),
+        batch_size=batch_size, shuffle=True)
 
-        loss = np_loss(y_hat, y_all, z_all, z_context)
-        loss.backward()
-        train_loss += loss.item()
-        optimizer.step()
-        if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(y_all), len(train_loader.dataset),
-                       100. * batch_idx / len(train_loader),
-                       loss.item() / len(y_all)))
-    print('====> Epoch: {} Average loss: {:.4f}'.format(
-        epoch, train_loss / len(train_loader.dataset)))
+    test_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('../data', train=False, transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])),
+        batch_size=batch_size, shuffle=True)
 
+    context_encoder = ContextEncoder().to(device)
+    context_to_dist = ContextToLatentDistribution().to(device)
+    target_network = Decoder().to(device)
+    full_model_params = list(context_encoder.parameters()) + list(target_network.parameters()) + list(
+        context_to_dist.parameters())
+    optimizer = optim.Adam(full_model_params, lr=1e-3)
 
-def test(epoch):
-    model.eval()
-    test_loss = 0
-    with torch.no_grad():
-        for i, (y_all, _) in enumerate(test_loader):
-            y_all = y_all.to(device).view(y_all.shape[0], -1, 1)
-            batch_size = y_all.shape[0]
-
-            N = 300
-            context_idx = get_context_idx(N)
-            x_context = idx_to_x(context_idx, batch_size)
-            y_context = idx_to_y(context_idx, y_all)
-
-            y_hat, z_all, z_context = model(x_context, y_context)
-            test_loss += np_loss(y_hat, y_all, z_all, z_context).item()
-
-            if i == 0:  # save PNG of reconstructed examples
-                plot_Ns = [10, 100, 300, 784]
-                num_examples = min(batch_size, 16)
-                for N in plot_Ns:
-                    recons = []
-                    context_idx = get_context_idx(N)
-                    x_context = idx_to_x(context_idx, batch_size)
-                    y_context = idx_to_y(context_idx, y_all)
-                    for d in range(5):
-                        y_hat, _, _ = model(x_context, y_context)
-                        recons.append(y_hat[:num_examples])
-                    recons = torch.cat(recons).view(-1, 1, 28, 28).expand(-1, 3, -1, -1)
-                    background = torch.tensor([0., 0., 1.], device=device)
-                    background = background.view(1, -1, 1).expand(num_examples, 3, 784).contiguous()
-                    context_pixels = y_all[:num_examples].view(num_examples, 1, -1)[:, :, context_idx]
-                    context_pixels = context_pixels.expand(num_examples, 3, -1)
-                    background[:, :, context_idx] = context_pixels
-                    comparison = torch.cat([background.view(-1, 3, 28, 28),
-                                            recons])
-                    save_image(comparison.cpu(),
-                               'results/ep_' + str(epoch) +
-                               '_cps_' + str(N) + '.png', nrow=num_examples)
-
-    test_loss /= len(test_loader.dataset)
-    print('====> Test set loss: {:.4f}'.format(test_loss))
+    train(context_encoder, context_to_dist, target_network, train_loader, optimizer, 10, device, batch_size)
 
 
-for epoch in range(1, args.epochs + 1):
-    train(epoch)
-    test(epoch)
+if __name__ == '__main__':
+    main()
