@@ -49,8 +49,8 @@ def random_sampling(batch, grid, h=28, w=28):
     batch_size = batch.size(0)
 
     batch = batch.view(batch_size, -1)  # bsize * 784
-    ps = torch.rand(batch_size).unsqueeze(1).expand(batch_size, h * w)
-    mask = torch.rand(batch.size())
+    ps = torch.rand(batch_size,device=batch.device).unsqueeze(1).expand(batch_size, h * w)
+    mask = torch.rand(batch.size(),device=batch.device)
     mask = (mask >= ps).float()  # bsize * 784
 
     grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
