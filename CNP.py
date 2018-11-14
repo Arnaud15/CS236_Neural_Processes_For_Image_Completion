@@ -61,6 +61,7 @@ def random_sampling(batch, grid, h=28, w=28):
 def loss_function(distribution_params, target_image):
     mu, logvar = distribution_params[:, :, 0], distribution_params[:, :, 1]
     loss = ((target_image - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2 * np.pi)).sum(dim=1).mean()
+
     return loss
 
 
