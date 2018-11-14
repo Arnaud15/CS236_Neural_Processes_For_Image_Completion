@@ -43,7 +43,7 @@ class Decoder(nn.Module):
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
         x = self.layer3(x)
-        return F.sigmoid(x)  # for mnist
+        return torch.sigmoid(x)  # for mnist
 
 
 def random_sampling(batch, grid, h=28, w=28):
@@ -66,6 +66,7 @@ def random_sampling(batch, grid, h=28, w=28):
     grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
 
     return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
+
 
 #
 # def loss_function(context_full, context_masked, target_image):
@@ -114,7 +115,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
         running_loss = 0.0
         last_log_time = time.time()
         for batch_idx, (batch, _) in enumerate(train_loader):
-
+            batch = batch.to(device)
             if ((batch_idx % 100) == 0) and batch_idx > 1:
                 print("epoch {} | batch {} | mean running loss {:.2f} | {:.2f} batch/s".format(epoch, batch_idx,
                                                                                                running_loss / 100,
@@ -131,6 +132,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             mask = mask.unsqueeze(-1)  # size bsize * 784 * 1
             r_masked = (context_full * mask).sum(dim=1) / (1 + mask.sum(dim=1))  # bsize * hidden_size
             r_full = context_full.mean(dim=1)
+            # print("relative diff between masked and full {:.2f}".format(torch.norm(r_masked-r_full)/torch.norm(r_full)))
 
             ## compute loss
             z_params_full = context_to_dist(r_full)
@@ -143,10 +145,16 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             target_input = torch.cat([z_full, grid_input], dim=-1)
 
             reconstructed_image = decoder.forward(target_input)
-            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
-                                                          reduce=False) * (1 - mask)).sum(dim=1).mean()
-            kl_loss = kl_normal(z_params_full, z_params_masked).mean()
+            #
+            # reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
+            #                                               reduction='none') * (1 - mask)).sum(dim=1).mean()
 
+            #TODO change this
+            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
+                                                          reduction='none')).sum(dim=1).mean()
+            kl_loss = kl_normal(z_params_full, z_params_masked).mean()
+            if batch_idx % 100 == 0:
+                print("reconstruction {:.2f} | kl {:.2f}".format(reconstruction_loss, kl_loss))
 
             loss = reconstruction_loss + kl_loss
             optimizer.zero_grad()
@@ -170,25 +178,25 @@ def main():
         datasets.MNIST('../data', train=True, download=True,
                        transform=transforms.Compose([
                            transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
+                           transforms.Lambda(lambda x: (x > .5).float())
                        ])),
         batch_size=batch_size, shuffle=True)
 
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, transform=transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            transforms.Lambda(lambda x: (x > .5).float())
         ])),
         batch_size=batch_size, shuffle=True)
 
     context_encoder = ContextEncoder().to(device)
     context_to_dist = ContextToLatentDistribution().to(device)
-    target_network = Decoder().to(device)
-    full_model_params = list(context_encoder.parameters()) + list(target_network.parameters()) + list(
+    decoder = Decoder().to(device)
+    full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
         context_to_dist.parameters())
     optimizer = optim.Adam(full_model_params, lr=1e-3)
 
-    train(context_encoder, context_to_dist, target_network, train_loader, optimizer, 10, device, batch_size)
+    train(context_encoder, context_to_dist, decoder, train_loader, optimizer, 10, device, batch_size)
 
 
 if __name__ == '__main__':
