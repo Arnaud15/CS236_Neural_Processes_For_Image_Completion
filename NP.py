@@ -52,8 +52,8 @@ def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder
     if not os.path.exists(models_path):
         os.makedirs(models_path)
     model_states_dict = {"encoder": encoder.get_state_dict(),
-            "context_to_latent_dist": context_to_latent_dist.get_state_dict(),
-            "decoder": decoder.get_state_dict()}
+                         "context_to_latent_dist": context_to_latent_dist.get_state_dict(),
+                         "decoder": decoder.get_state_dict()}
     torch.save(model_states_dict, file_path)
     print('Saved state dicts to {}'.format(file_path))
 
@@ -166,10 +166,9 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             # add loss
             running_loss += loss.item()
             epoch_loss += loss.item()
-        if (epoch + 1) % 10 == 0:
-            save_model(epoch + 1)
 
         print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
+    save_model(args.models_path, "NP_{}_epoch".format(args.epochs), context_encoder, context_to_dist, decoder)
     return
 
 
