@@ -53,7 +53,7 @@ def random_sampling(batch):
 
 def loss_function(distribution_params, full_Y):
     mu, logvar = distribution_params[:, :, 0], distribution_params[:, :, 1]
-    loss = torch.sum((full_Y - mu).pow(2) / (2 * logvar.exp()) + 0.5 * logvar)
+    loss = torch.sum((full_Y - mu).pow(2) / (2 * logvar.exp().pow(2)) + 0.5 * logvar + .5 * np.log(2*np.pi))
     return loss
 
 
