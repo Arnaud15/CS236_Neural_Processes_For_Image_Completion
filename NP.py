@@ -52,10 +52,7 @@ class Decoder(nn.Module):
 def save_images_batch(images_batch, file_name, h=28, w=28):
     images_batch = images_batch.view(-1, 1, h, w)
     grid = make_grid(images_batch, nrow=10)
-    plt.imshow(np.transpose(grid.detach().numpy(), (1, 2, 0)), interpolation='nearest')
-    plt.imsave(file_name)
-    plt.clear()
-
+    plt.imsave(file_name, np.transpose(grid.detach().numpy(), (1, 2, 0)))
 
 def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder, device):
     file_path = os.path.join(models_path, model_name)
@@ -100,14 +97,23 @@ def random_sampling(batch, grid, h=28, w=28):
     return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
 
 
-def kl_normal(params1, params2):
-    mu1, var1 = params1
-    var1 = var1.exp()
-    mu2, var2 = params2
-    var2 = var2.exp()
-    element_wise = 0.5 * (torch.log(var2) - torch.log(var1) + var1 / var2 + (mu1 - mu2).pow(2) / var2 - 1)
+def kl_normal(params_p, params_q):
+    mu_p, logvar_p = params_p
+    var_p = logvar_p.exp()
+    mu_q, logvar_q = params_q
+    var_q = logvar_q.exp()
+    element_wise = 0.5 * (torch.log(var_q) - torch.log(var_p) + var_p / var_q + (mu_p - mu_q).pow(2) / var_q - 1)
     kl = element_wise.sum(-1)
     return kl
+
+
+def kl_div_gaussians(mu_q, logvar_q, mu_p, logvar_p):
+    var_p = torch.exp(logvar_p)
+    kl_div = (torch.exp(logvar_q) + (mu_q - mu_p) ** 2) / var_p \
+             - 1.0 \
+             + logvar_p - logvar_q
+    kl_div = 0.5 * kl_div.sum()
+    return kl_div
 
 
 def sample_z(z_params):
@@ -159,7 +165,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
 
             # resize context to have one context per input coordinate
-            grid_input = grid.unsqueeze(0).expand(batch_size, -1, -1)
+            grid_input = grid.unsqueeze(0).expand(batch.size(0), -1, -1)
             target_input = torch.cat([z_full, grid_input], dim=-1)
 
             reconstructed_image = decoder.forward(target_input)
@@ -168,7 +174,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
                     os.makedirs("images")
                 save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
                 save_images_batch(reconstructed_image.cpu(), "images/reconstruct_epoch_{}".format(epoch))
-            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
+            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch.size(0), h * w, 1),
                                                           reduction='none') * (1 - mask)).sum(dim=1).mean()
 
             kl_loss = kl_normal(z_params_full, z_params_masked).mean()
@@ -185,8 +191,10 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             epoch_loss += loss.item()
 
         print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
-    save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist, decoder,
-               device)
+        if (epoch % args.save_evevery == 0) and epoch > 0:
+            save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist,
+                       decoder,
+                       device)
     return
 
 
@@ -234,6 +242,7 @@ parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--bsize", type=int, default=32)
 parser.add_argument("--resume_file", type=str, default=None)
+parser.add_argument("--save_every", type=int, default=10)
 
 if __name__ == '__main__':
     args = parser.parse_args()
