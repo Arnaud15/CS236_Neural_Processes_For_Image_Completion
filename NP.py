@@ -161,7 +161,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
 
             # resize context to have one context per input coordinate
-            grid_input = grid.unsqueeze(0).expand(batch_size, -1, -1)
+            grid_input = grid.unsqueeze(0).expand(batch.size(0), -1, -1)
             target_input = torch.cat([z_full, grid_input], dim=-1)
 
             reconstructed_image = decoder.forward(target_input)
@@ -170,7 +170,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
                     os.makedirs("images")
                 save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
                 save_images_batch(reconstructed_image.cpu(), "images/reconstruct_epoch_{}".format(epoch))
-            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
+            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch.size(0), h * w, 1),
                                                           reduction='none') * (1 - mask)).sum(dim=1).mean()
 
             kl_loss = kl_normal(z_params_full, z_params_masked).mean()
