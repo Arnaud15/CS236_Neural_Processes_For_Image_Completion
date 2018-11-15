@@ -5,138 +5,18 @@ from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 import numpy as np
-from torchvision.utils import save_image, make_grid
-import matplotlib.pyplot as plt
 import os
 import time
 from argparse import ArgumentParser
-
-
-class ContextEncoder(nn.Module):
-    def __init__(self):
-        super(ContextEncoder, self).__init__()
-        self.layer1 = nn.Linear(3, 200)
-        self.layer2 = nn.Linear(200, 200)
-        self.layer3 = nn.Linear(200, 128)
-
-    def forward(self, x):
-        x = F.relu(self.layer1(x))
-        x = F.relu(self.layer2(x))
-        return self.layer3(x)
-
-
-class ContextToLatentDistribution(nn.Module):
-    def __init__(self):
-        super(ContextToLatentDistribution, self).__init__()
-        self.mu_layer = nn.Linear(128, 128)
-        self.logvar_layer = nn.Linear(128, 128)
-
-    def forward(self, x):
-        return self.mu_layer(x), self.logvar_layer(x)
-
-
-class Decoder(nn.Module):
-    def __init__(self):
-        super(Decoder, self).__init__()
-        self.layer1 = nn.Linear(128 + 2, 200)
-        self.layer2 = nn.Linear(200, 200)
-        self.layer3 = nn.Linear(200, 200)
-        self.layer4 = nn.Linear(200, 200)
-        self.layer5 = nn.Linear(200, 1)
-
-    def forward(self, x):
-        x = F.relu(self.layer1(x))
-        x = F.relu(self.layer2(x))
-        x = F.relu(self.layer3(x))
-        x = F.relu(self.layer4(x))
-        x = self.layer5(x)
-        return torch.sigmoid(x)  # for mnist
-
-
-def save_images_batch(images_batch, file_name, h=28, w=28):
-    images_batch = images_batch.view(-1, 1, h, w)
-    grid = make_grid(images_batch, nrow=10)
-    plt.imsave(file_name, np.transpose(grid.detach().numpy(), (1, 2, 0)))
-
-def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder, device):
-    file_path = os.path.join(models_path, model_name)
-    if not os.path.exists(models_path):
-        os.makedirs(models_path)
-    model_states_dict = {"encoder": encoder.cpu().state_dict(),
-                         "context_to_latent_dist": context_to_latent_dist.cpu().state_dict(),
-                         "decoder": decoder.cpu().state_dict()}
-    torch.save(model_states_dict, file_path)
-    encoder = encoder.to(device)
-    decoder = decoder.to(device)
-    context_to_latent_dist = context_to_latent_dist.to(device)
-    print('Saved state dicts to {}'.format(file_path))
-
-
-def load_models(file_path, encoder, context_to_latent_dist, decoder):
-    dict = torch.load(file_path)
-    encoder.load_state_dict(dict["encoder"])
-    context_to_latent_dist.load_state_dict(dict["context_to_latent_dist"])
-    decoder.load_state_dict(dict["decoder"])
-
-
-def random_sampling(batch, grid, h=28, w=28):
-    '''
-
-    :param batch:
-    :param grid:
-    :param h:
-    :param w:
-    :return: encoder_input size (bsize,784,3) , mask size (bsize,784)
-    '''
-    # batch bsize * 1 * 28 * 28
-    batch_size = batch.size(0)
-
-    batch = batch.view(batch_size, -1)  # bsize * 784
-    ps = torch.rand(batch_size, device=batch.device).unsqueeze(1).expand(batch_size, h * w)
-    mask = torch.rand(batch.size(), device=batch.device)
-    mask = (mask >= ps).float()  # bsize * 784
-
-    grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
-
-    return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
-
-
-def kl_normal(params_p, params_q):
-    mu_p, logvar_p = params_p
-    var_p = logvar_p.exp()
-    mu_q, logvar_q = params_q
-    var_q = logvar_q.exp()
-    element_wise = 0.5 * (torch.log(var_q) - torch.log(var_p) + var_p / var_q + (mu_p - mu_q).pow(2) / var_q - 1)
-    kl = element_wise.sum(-1)
-    return kl
-
-
-def kl_div_gaussians(mu_q, logvar_q, mu_p, logvar_p):
-    var_p = torch.exp(logvar_p)
-    kl_div = (torch.exp(logvar_q) + (mu_q - mu_p) ** 2) / var_p \
-             - 1.0 \
-             + logvar_p - logvar_q
-    kl_div = 0.5 * kl_div.sum()
-    return kl_div
-
-
-def sample_z(z_params):
-    mu, var = z_params
-    var = var.exp()
-    sample = torch.randn(mu.shape).to(mu.device)
-    z = mu + (torch.sqrt(var) * sample)
-    return z
-
+from models import *
+from utils import *
 
 def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_epochs, device, batch_size, save_path,
           h=28,
           w=28):
     context_encoder.train()
     decoder.train()
-    xs = np.linspace(0, 1, h)
-    ys = np.linspace(0, 1, w)
-    xx, yy = np.meshgrid(xs, ys)
-    grid = torch.tensor(np.stack([xx, yy], axis=-1)).float().to(device).view(h * w, 2)  # size 784*2
+    grid = make_mesh_grid(h,w).to(device).view(h * w, 2)  # size 784*2
 
     for epoch in range(n_epochs):
         epoch_loss = 0.0
