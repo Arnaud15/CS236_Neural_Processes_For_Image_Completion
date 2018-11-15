@@ -195,7 +195,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             epoch_loss += loss.item()
 
         print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
-        if (epoch % args.save_evevery == 0) and epoch > 0:
+        if (epoch % args.save_every == 0) and epoch > 0:
             save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist,
                        decoder,
                        device)
