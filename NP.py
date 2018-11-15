@@ -5,6 +5,8 @@ from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 import numpy as np
+from torchvision.utils import save_image, make_grid
+import matplotlib.pyplot as plt
 import os
 import time
 from argparse import ArgumentParser
@@ -45,6 +47,14 @@ class Decoder(nn.Module):
         x = F.relu(self.layer2(x))
         x = self.layer3(x)
         return torch.sigmoid(x)  # for mnist
+
+
+def save_images_batch(images_batch, file_name, h=28, w=28):
+    images_batch = images_batch.view(-1, 1, h, w)
+    grid = make_grid(images_batch, nrow=10)
+    plt.imshow(np.transpose(grid.detach().numpy(), (1, 2, 0)), interpolation='nearest')
+    plt.imsave(file_name)
+    plt.clear()
 
 
 def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder, device):
@@ -153,7 +163,11 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             target_input = torch.cat([z_full, grid_input], dim=-1)
 
             reconstructed_image = decoder.forward(target_input)
-
+            if batch_idx == 0:
+                if not os.path.exists("images"):
+                    os.makedirs("images")
+                save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
+                save_images_batch(reconstructed_image.cpu(), "images/reconstruct_epoch_{}".format(epoch))
             reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch_size, h * w, 1),
                                                           reduction='none') * (1 - mask)).sum(dim=1).mean()
 
@@ -171,7 +185,8 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             epoch_loss += loss.item()
 
         print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
-    save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist, decoder, device)
+    save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist, decoder,
+               device)
     return
 
 
@@ -200,7 +215,7 @@ def main(args):
     decoder = Decoder()
 
     if args.resume_file is not None:
-        load_models(args.resume_file,context_encoder,context_to_dist,decoder)
+        load_models(args.resume_file, context_encoder, context_to_dist, decoder)
     context_encoder = context_encoder.to(device)
     decoder = decoder.to(device)
     context_to_dist = context_to_dist.to(device)
@@ -218,7 +233,7 @@ parser.add_argument("--save_model", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--bsize", type=int, default=32)
-parser.add_argument("--resume_file",type=str,default=None)
+parser.add_argument("--resume_file", type=str, default=None)
 
 if __name__ == '__main__':
     args = parser.parse_args()
