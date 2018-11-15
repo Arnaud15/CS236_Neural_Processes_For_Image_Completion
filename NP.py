@@ -15,9 +15,9 @@ from argparse import ArgumentParser
 class ContextEncoder(nn.Module):
     def __init__(self):
         super(ContextEncoder, self).__init__()
-        self.layer1 = nn.Linear(3, 128)
-        self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, 64)
+        self.layer1 = nn.Linear(3, 200)
+        self.layer2 = nn.Linear(200, 200)
+        self.layer3 = nn.Linear(200, 128)
 
     def forward(self, x):
         x = F.relu(self.layer1(x))
@@ -28,8 +28,8 @@ class ContextEncoder(nn.Module):
 class ContextToLatentDistribution(nn.Module):
     def __init__(self):
         super(ContextToLatentDistribution, self).__init__()
-        self.mu_layer = nn.Linear(64, 64)
-        self.logvar_layer = nn.Linear(64, 64)
+        self.mu_layer = nn.Linear(128, 128)
+        self.logvar_layer = nn.Linear(128, 128)
 
     def forward(self, x):
         return self.mu_layer(x), self.logvar_layer(x)
@@ -38,14 +38,18 @@ class ContextToLatentDistribution(nn.Module):
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
-        self.layer1 = nn.Linear(64 + 2, 32)
-        self.layer2 = nn.Linear(32, 16)
-        self.layer3 = nn.Linear(16, 1)
+        self.layer1 = nn.Linear(128 + 2, 200)
+        self.layer2 = nn.Linear(200, 200)
+        self.layer3 = nn.Linear(200, 200)
+        self.layer4 = nn.Linear(200, 200)
+        self.layer5 = nn.Linear(200, 1)
 
     def forward(self, x):
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
-        x = self.layer3(x)
+        x = F.relu(self.layer3(x))
+        x = F.relu(self.layer4(x))
+        x = self.layer5(x)
         return torch.sigmoid(x)  # for mnist
 
 
