@@ -6,7 +6,6 @@ from torchvision import datasets, transforms
 
 def random_mask(bsize, n_pixels_to_keep, total_pixels=784):
     a = np.array([np.random.choice(total_pixels, n_pixels_to_keep, replace=False) for _ in range(bsize)])
-    # b = np.arange(0, bsize, dtype=int)
     mask = np.zeros((bsize, total_pixels))
     for i in range(bsize):
         mask[i, a[i, :]] = 1
@@ -36,8 +35,7 @@ def display_images(original_image, mask, reconstructed_image, h=28, w=28):
 
 
 def get_sample_images(batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, n_samples, mask=None,
-                      save=False,
-                      save_file=""):
+                      save=False, save_file=""):
     # make grid
     device = batch.device
     grid = make_mesh_grid(h, w).view(1, h * w, 2).expand(batch.size(0), -1, -1).to(device)
@@ -55,11 +53,9 @@ def get_sample_images(batch, h, w, context_encoder, context_to_dist, decoder, n_
     decoded_images = decoder(
         torch.cat([z_context, grid.expand(n_samples, -1, -1, -1).view(-1, h * w, 2)], dim=-1))
     output_grid = display_images(original_image=batch, mask=mask, reconstructed_image=decoded_images)
-    if not save:
-        plt.imshow(output_grid)
-        plt.show()
-    else:
+    if save:
         plt.imsave(save_file, output_grid)
+    return output_grid
 
 
 def main(args):
@@ -95,14 +91,16 @@ def main(args):
         assert args.mask_type == 'random'
         mask = random_mask(batch.size(0), args.n_pixels, total_pixels=784)
 
-    get_sample_images(batch, h, w, context_encoder, context_to_dist, decoder, args.n_pixels, args.n_samples, mask=mask,
+    image = get_sample_images(batch, h, w, context_encoder, context_to_dist, decoder, args.n_pixels, args.n_samples, mask=mask,
                       save=False)
+    plt.imshow(image)
+    plt.show()
 
 
 parser = ArgumentParser()
 parser.add_argument("--resume_file", type=str, default="models/NP_model_epoch_5000.pt")
 parser.add_argument("--bsize", type=int, default=10)
-parser.add_argument("--n_pixels", type=int, default=50)
+parser.add_argument("--n_pixels", type=int, default=100)
 parser.add_argument("--n_samples", type=int, default=5, help="number of samples per context point")
 parser.add_argument("--mask_type", type=str, choices=["random", "upper"], default="random")
 if __name__ == '__main__':

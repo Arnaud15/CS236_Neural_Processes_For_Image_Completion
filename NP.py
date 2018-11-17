@@ -10,13 +10,17 @@ import time
 from argparse import ArgumentParser
 from models import *
 from utils import *
+from tensorboardX import SummaryWriter
+from complete_image import get_sample_images, random_mask
 
-def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_epochs, device, batch_size, save_path,
+
+def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, n_epochs, device, batch_size,
+          save_path, summary_writer,
           h=28,
           w=28):
     context_encoder.train()
     decoder.train()
-    grid = make_mesh_grid(h,w).to(device).view(h * w, 2)  # size 784*2
+    grid = make_mesh_grid(h, w).to(device).view(h * w, 2)  # size 784*2
 
     for epoch in range(n_epochs):
         epoch_loss = 0.0
@@ -30,6 +34,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
                                                                                                100 / (
                                                                                                        time.time() - last_log_time)))
                 last_log_time = time.time()
+                summary_writer.add_scalar("train/loss", running_loss, batch_idx)
                 running_loss = 0.0
 
             context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
@@ -79,10 +84,29 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
             save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist,
                        decoder,
                        device)
+
+        # do examples
+        test_batch, _ = next(iter(test_loader))[:5]
+        test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
+
+        mask = random_mask(batch.size(0), args.n_pixels, total_pixels=784)
+
+        for n_pixels in [50, 150, 450]:
+            image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels,
+                                      5,
+                                      mask=mask,
+                                      save=False)
+            image = torch.tensor(image)
+            summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
+
     return
 
 
 def main(args):
+    if not os.path.isdir(args.log_dir):
+        os.makedirs(args.log_dir)
+    summary_writer = SummaryWriter(log_dir=args.log_dir)
+
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
 
@@ -115,8 +139,9 @@ def main(args):
         context_to_dist.parameters())
     optimizer = optim.Adam(full_model_params, lr=args.lr)
 
-    train(context_encoder, context_to_dist, decoder, train_loader, optimizer, args.epochs, device, args.bsize,
-          args.models_path)
+    train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, args.epochs, device,
+          args.bsize,
+          args.models_path, summary_writer=summary_writer)
 
 
 parser = ArgumentParser()
@@ -127,7 +152,7 @@ parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--bsize", type=int, default=32)
 parser.add_argument("--resume_file", type=str, default=None)
 parser.add_argument("--save_every", type=int, default=10)
-
+parser.add_argument("--log_dir", type=str, default="logs")
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
