@@ -89,9 +89,10 @@ def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, 
         test_batch, _ = next(iter(test_loader))[:5]
         test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
 
-        mask = random_mask(batch.size(0), args.n_pixels, total_pixels=784)
+
 
         for n_pixels in [50, 150, 450]:
+            mask = random_mask(batch.size(0), n_pixels, total_pixels=784)
             image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels,
                                       5,
                                       mask=mask,
