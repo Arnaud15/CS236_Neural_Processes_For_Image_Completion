@@ -16,35 +16,41 @@ class ContextEncoder(nn.Module):
         x = F.relu(self.layer2(x))
         return self.layer3(x)
 
+
 class MeanAgregator(nn.Module):
     def __init__(self):
-        super(MeanAgregator,self).__init__()
-    def forward(self,x,mask=None,agg_dim=1):
+        super(MeanAgregator, self).__init__()
+
+    def forward(self, x, mask=None, agg_dim=1):
+        # import pdb;
+        # pdb.set_trace()
         if mask is None:
             return x.mean(dim=agg_dim)
         else:
-            return (x*mask).sum(dim=agg_dim)/(1+mask.sum(dim=agg_dim))
+            return (x * mask).sum(dim=agg_dim) / (1e-8 + mask.sum(dim=agg_dim))
+
 
 class AttentionAggregator(nn.Module):
-    def __init__(self,input_dim,query_dim):
-        super(AttentionAggregator,self).__init__()
-        #TODO add deeper query and key
-        self.query = nn.Linear(input_dim,query_dim)
-        self.key = nn.Linear(input_dim,query_dim)
-        self.query_dim=query_dim
+    def __init__(self, input_dim):
+        super(AttentionAggregator, self).__init__()
+        # TODO add deeper query and key
+        self.query = nn.Linear(input_dim, input_dim)
         self.input_dim = input_dim
 
-    def forward(self,x,mask=None,agg_dim=1):
-        keys = self.key(x)
-        queries = self.queries(x)
-        n= x.size(-2) # 784
-        # check this
-        attention_weights= (keys.dot(queries.transpose(-1,-2)))/np.sqrt(self.query_dim)
-        x = x.unsqueeze(2).expand(-1,-1,n,-1)
-        mask = mask.unsqueeze(2).expand(-1,-1,n,-1)
+    def forward(self, x, mask=None, agg_dim=1):
+        import pdb;
+        pdb.set_trace()
 
+        keys = x
+        queries = self.query(x)
 
+        dot_products = (keys * queries).sum(dim=-1) / np.sqrt(self.input_dim)
+        if mask is not None:
+            dot_products = dot_products - 1000 * mask
 
+        attention_weights = F.softmax(dot_products, dim=-1).unsqueeze(-1).expand(-1, -1, self.input_dim)
+
+        return (attention_weights * x).sum(-2)
 
 
 class ContextToLatentDistribution(nn.Module):

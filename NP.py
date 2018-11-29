@@ -8,13 +8,14 @@ import numpy as np
 import os
 import time
 from argparse import ArgumentParser
-from models_saved import *
+from models import *
 from utils import *
 from tensorboardX import SummaryWriter
 from complete_image import get_sample_images, random_mask
 
 
-def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, n_epochs, device, save_path,
+def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, n_epochs, device,
+          save_path,
           summary_writer, save_every=10, h=28, w=28):
     context_encoder.train()
     decoder.train()
@@ -42,9 +43,9 @@ def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, 
 
             context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
 
-            mask = mask.unsqueeze(-1)  # size bsize * 784 * 1
-            r_masked = (context_full * mask).sum(dim=1) / (1 + mask.sum(dim=1))  # bsize * hidden_size
-            r_full = context_full.mean(dim=1)
+            mask = mask.unsqueeze(-1)  # size bsize * 784 *
+            r_masked = aggregator.forward(context_full, mask=mask, agg_dim=1)  # bsize * hidden_size
+            r_full = aggregator.forward(context_full, mask=None, agg_dim=1)
             # print("relative diff between masked and full {:.2f}".format(torch.norm(r_masked-r_full)/torch.norm(r_full)))
 
             ## compute loss
@@ -86,7 +87,6 @@ def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, 
                        device)
 
         # do examples
-
 
         test_batch, _ = next(iter(test_loader))[:5]
         test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
@@ -140,12 +140,19 @@ def main(args):
         context_to_dist.parameters())
     optimizer = optim.Adam(full_model_params, lr=args.lr)
 
-    train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, args.epochs, device,
+    if args.aggregator == "mean":
+        aggregator = MeanAgregator()
+    else:
+        assert args.aggregator == "attention"
+        aggregator = AttentionAggregator(128)
+
+    train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, args.epochs,
+          device,
           args.models_path, summary_writer=summary_writer, save_every=args.save_every)
 
 
 parser = ArgumentParser()
-parser.add_argument("--models_path", type=str, default="models_saved/")
+parser.add_argument("--models_path", type=str, default="models/")
 parser.add_argument("--save_model", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--epochs", type=int, default=10)
@@ -153,6 +160,7 @@ parser.add_argument("--bsize", type=int, default=32)
 parser.add_argument("--resume_file", type=str, default=None)
 parser.add_argument("--save_every", type=int, default=10)
 parser.add_argument("--log_dir", type=str, default="logs")
+parser.add_argument("--aggregator", type=str, choices=['mean', 'attention'], default='attention')
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
