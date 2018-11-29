@@ -86,8 +86,8 @@ def main(args):
     if args.test_mode == "sequential":
         nll_test = 0
         for i, (image, _) in enumerate(test_loader):
-            if i > 10:
-                break
+            # if i > 10:
+            #     break
             image = image.view(-1, h * w, 1).to(device)
             mask = torch.zeros(args.bsize, h * w).to(device)
             context_full = context_encoder(torch.cat([image, grid], dim=-1))
@@ -107,9 +107,72 @@ def main(args):
                 nll_image += nll_pixel
             nll_test += nll_image
             # print("nll_pixel {:.2f}".format(nll_pixel))
-            print("nll_image {:.2f}".format(nll_image))
-        nll_test /= len(test_loader)
-        print("NLL TEST {}".format(nll_test))
+            print("batch {}/{}".format(i, len(test_loader)))
+        nll_test /= (len(test_loader) * args.bsize)
+        print("NLL TEST SEQUENTIAL {}".format(nll_test))
+    if args.test_mode == "random":
+        nll_test = 0
+        for i, (image, _) in enumerate(test_loader):
+            # if i > 10:
+            #     break
+            image = image.view(-1, h * w, 1).to(device)
+            mask = torch.zeros(args.bsize, h * w).to(device)
+            context_full = context_encoder(torch.cat([image, grid], dim=-1))
+            nll_image = 0
+            random_order = np.random.permutation(h * w)
+            for k in random_order:
+                context_masked = (context_full * mask.unsqueeze(-1)).sum(dim=1) / (1e-8 + mask.sum(dim=1, keepdim=True))
+                z_context = sample_z(context_to_dist(context_masked))
+                decoded_pixel = decoder(torch.cat([z_context, grid[:, k]], dim=-1))
+                # import pdb;
+                # pdb.set_trace()
+
+                y_pred = decoded_pixel
+                y_true = image[:, k]
+                nll_pixel = F.binary_cross_entropy(y_pred, y_true, reduction='sum').item()
+                nll_image += nll_pixel
+                mask[:, k] = 1
+            nll_test += nll_image
+            # print("nll_pixel {:.2f}".format(nll_pixel))
+            print("batch {}/{}".format(i, len(test_loader)))
+        nll_test /= (len(test_loader) * args.bsize)
+        print("NLL TEST RANDOM {}".format(nll_test))
+
+    if args.test_mode == "highest_var":
+        # assert args.bsize == 1
+        nll_test = 0
+        for i, (image, _) in enumerate(test_loader):
+            # if i > 10:
+            #     break
+            image = image.view(-1, h * w, 1).to(device)
+            mask = torch.zeros(args.bsize, h * w).to(device)
+            context_full = context_encoder(torch.cat([image, grid], dim=-1))
+            nll_image = 0
+            for k in range(h * w):
+                context_masked = (context_full * mask.unsqueeze(-1)).sum(dim=1) / (1e-8 + mask.sum(dim=1, keepdim=True))
+                z_context = sample_z(context_to_dist(context_masked))
+
+                decoded_pixel = decoder(torch.cat([z_context.unsqueeze(1).expand(-1, h * w, -1), grid], dim=-1))
+                # print("decoded pixel max {}".format(decoded_pixel.max()))
+                # import pdb;
+                # pdb.set_trace()
+                a = decoded_pixel * (1 - decoded_pixel) * (1 - mask.unsqueeze(-1))
+
+                _, next_pixel = torch.max(a, dim=1)
+
+                y_pred = decoded_pixel[:, next_pixel]
+                y_true = image[:, next_pixel]
+                # import pdb;
+                # pdb.set_trace()
+                nll_pixel = F.binary_cross_entropy(y_pred, y_true, reduction='sum').item()
+                nll_image += nll_pixel
+
+                mask[:, next_pixel] = 1
+            nll_test += nll_image
+            # print("nll_pixel {:.2f}".format(nll_pixel))
+            print("batch {}/{} nll {}".format(i, len(test_loader), nll_image))
+        nll_test /= (len(test_loader) * args.bsize)
+        print("NLL TEST highest var {}".format(nll_test))
 
 
 parser = ArgumentParser()
@@ -118,7 +181,8 @@ parser.add_argument("--bsize", type=int, default=10)
 parser.add_argument("--n_pixels", type=int, default=100)
 parser.add_argument("--n_samples", type=int, default=3, help="number of samples per context point")
 parser.add_argument("--mask_type", type=str, choices=["random", "upper"], default="random")
-parser.add_argument("--test_mode", type=str, choices=["sequential", "random", "highest_var"], default="sequential")
+parser.add_argument("--test_mode", type=str, choices=["sequential", "random", "highest_var"],
+                    default="highest_var")
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
