@@ -67,7 +67,7 @@ def main(args):
             transforms.ToTensor(),
             transforms.Lambda(lambda x: (x > .5).float())
         ])),
-        batch_size=1, shuffle=False)
+        batch_size=args.bsize, shuffle=False)
 
     context_encoder = ContextEncoder()
     context_to_dist = ContextToLatentDistribution()
@@ -81,30 +81,35 @@ def main(args):
     decoder = decoder.to(device)
 
     h, w = 28, 28
-    grid = make_mesh_grid(h, w).view(1, h * w, 2).to(device)
+    grid = make_mesh_grid(h, w).view(1, h * w, 2).expand(args.bsize, -1, -1).to(device)
     # autoregressive
-    nll_test = 0
-    for (image, _) in test_loader:
-        image = image.view(-1, h * w, 1)
-        mask = torch.zeros(1, h * w)
-        context_full = context_encoder(torch.cat([image, grid], dim=-1))
-        nll_image = 0
-        for k in range(0, h * w):
-            mask[0, :k] = 1
+    if args.test_mode == "sequential":
+        nll_test = 0
+        for i, (image, _) in enumerate(test_loader):
+            if i > 10:
+                break
+            image = image.view(-1, h * w, 1).to(device)
+            mask = torch.zeros(args.bsize, h * w).to(device)
+            context_full = context_encoder(torch.cat([image, grid], dim=-1))
+            nll_image = 0
+            for k in range(0, h * w):
+                mask[:, :k] = 1
 
-            context_masked = (context_full * mask.unsqueeze(-1)).sum(dim=1) / (1e-8 + mask.sum(dim=1, keepdim=True))
-            z_context = sample_z(context_to_dist(context_masked))
-            decoded_pixel = decoder(torch.cat([z_context, grid[:, k]], dim=-1))
+                context_masked = (context_full * mask.unsqueeze(-1)).sum(dim=1) / (1e-8 + mask.sum(dim=1, keepdim=True))
+                z_context = sample_z(context_to_dist(context_masked))
+                decoded_pixel = decoder(torch.cat([z_context, grid[:, k]], dim=-1))
+                # import pdb;
+                # pdb.set_trace()
 
-            y_pred = decoded_pixel[0]
-            y_true = image[0, k]
-            nll_pixel = -(y_true * torch.log(1e-16 + y_pred) + (1 - y_true) * torch.log(1 + 1e-16 - y_pred)).item()
-            nll_image += nll_pixel
-        nll_test += nll_image
-        # print("nll_pixel {:.2f}".format(nll_pixel))
-        print("nll_image {:.2f}".format(nll_image))
-    nll_test /= len(test_loader)
-    print("NLL TEST {}".format(nll_test))
+                y_pred = decoded_pixel
+                y_true = image[:, k]
+                nll_pixel = F.binary_cross_entropy(y_pred, y_true, reduction='sum').item()
+                nll_image += nll_pixel
+            nll_test += nll_image
+            # print("nll_pixel {:.2f}".format(nll_pixel))
+            print("nll_image {:.2f}".format(nll_image))
+        nll_test /= len(test_loader)
+        print("NLL TEST {}".format(nll_test))
 
 
 parser = ArgumentParser()
@@ -113,6 +118,7 @@ parser.add_argument("--bsize", type=int, default=10)
 parser.add_argument("--n_pixels", type=int, default=100)
 parser.add_argument("--n_samples", type=int, default=3, help="number of samples per context point")
 parser.add_argument("--mask_type", type=str, choices=["random", "upper"], default="random")
+parser.add_argument("--test_mode", type=str, choices=["sequential", "random", "highest_var"], default="sequential")
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
