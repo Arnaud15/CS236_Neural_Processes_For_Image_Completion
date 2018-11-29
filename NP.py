@@ -7,9 +7,11 @@ from torchvision.utils import save_image
 import numpy as np
 from torchvision.utils import save_image, make_grid
 import matplotlib.pyplot as plt
+import metrics
 import os
 import time
 from argparse import ArgumentParser
+from tensorboardX import SummaryWriter
 
 
 class ContextEncoder(nn.Module):
@@ -81,7 +83,6 @@ def load_models(file_path, encoder, context_to_latent_dist, decoder):
 
 def random_sampling(batch, grid, h=28, w=28):
     '''
-
     :param batch:
     :param grid:
     :param h:
@@ -133,6 +134,9 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
           w=28):
     context_encoder.train()
     decoder.train()
+
+    writer = SummaryWriter()
+
     xs = np.linspace(0, 1, h)
     ys = np.linspace(0, 1, w)
     xx, yy = np.meshgrid(xs, ys)
@@ -183,7 +187,10 @@ def train(context_encoder, context_to_dist, decoder, train_loader, optimizer, n_
 
             kl_loss = kl_normal(z_params_full, z_params_masked).mean()
             if batch_idx % 100 == 0:
-                print("reconstruction {:.2f} | kl {:.2f}".format(reconstruction_loss, kl_loss))
+                psnr = metrics.psnr(reconstructed_image, batch)
+                cos_sim = metrics.cosine_similarity(reconstructed_image, batch)
+                ssim = metrics.ssim(reconstructed_image, batch)
+                print("reconstruction {:.2f} | kl {:.2f} | PSNR {:.2f}dB | Cosine similarity: {:.2f} | SSIM: {:.2f}".format(reconstruction_loss, kl_loss, psnr, cos_sim, ssim))
 
             loss = reconstruction_loss + kl_loss
             optimizer.zero_grad()
@@ -228,7 +235,7 @@ def main(args):
 
     if args.resume_file is not None:
         load_models(args.resume_file, context_encoder, context_to_dist, decoder)
-    context_encoder = context_encoder.to(device)
+    context_encoder = model = context_encoder.to(device)
     decoder = decoder.to(device)
     context_to_dist = context_to_dist.to(device)
     full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
