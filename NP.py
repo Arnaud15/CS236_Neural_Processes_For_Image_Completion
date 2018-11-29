@@ -8,24 +8,24 @@ import numpy as np
 import os
 import time
 from argparse import ArgumentParser
-from models import *
+from models_saved import *
 from utils import *
 from tensorboardX import SummaryWriter
 from complete_image import get_sample_images, random_mask
 
 
-def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, n_epochs, device, batch_size,
-          save_path, summary_writer,
-          h=28,
-          w=28):
+def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, n_epochs, device, save_path,
+          summary_writer, save_every=10, h=28, w=28):
     context_encoder.train()
     decoder.train()
     grid = make_mesh_grid(h, w).to(device).view(h * w, 2)  # size 784*2
 
     for epoch in range(n_epochs):
-        epoch_loss = 0.0
         running_loss = 0.0
         last_log_time = time.time()
+
+        # Training
+        train_loss = 0.0
         for batch_idx, (batch, _) in enumerate(train_loader):
             batch = batch.to(device)
             if ((batch_idx % 100) == 0) and batch_idx > 1:
@@ -34,7 +34,7 @@ def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, 
                                                                                                100 / (
                                                                                                        time.time() - last_log_time)))
                 last_log_time = time.time()
-                summary_writer.add_scalar("train/loss", running_loss, batch_idx)
+                summary_writer.add_scalar("train/loss", running_loss / 100, batch_idx)
                 running_loss = 0.0
 
             context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
@@ -77,19 +77,19 @@ def train(context_encoder, context_to_dist, decoder, train_loader, test_loader, 
 
             # add loss
             running_loss += loss.item()
-            epoch_loss += loss.item()
+            train_loss += loss.item()
 
-        print("Epoch loss : {}".format(epoch_loss / len(train_loader)))
-        if (epoch % args.save_every == 0) and epoch > 0:
-            save_model(args.models_path, "NP_model_epoch_{}.pt".format(args.epochs), context_encoder, context_to_dist,
+        print("Epoch train loss : {}".format(train_loss / len(train_loader)))
+        if (epoch % save_every == 0) and epoch > 0:
+            save_model(save_path, "NP_model_epoch_{}.pt".format(epoch), context_encoder, context_to_dist,
                        decoder,
                        device)
 
         # do examples
+
+
         test_batch, _ = next(iter(test_loader))[:5]
         test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
-
-
 
         for n_pixels in [50, 150, 450]:
             mask = random_mask(batch.size(0), n_pixels, total_pixels=784)
@@ -141,12 +141,11 @@ def main(args):
     optimizer = optim.Adam(full_model_params, lr=args.lr)
 
     train(context_encoder, context_to_dist, decoder, train_loader, test_loader, optimizer, args.epochs, device,
-          args.bsize,
-          args.models_path, summary_writer=summary_writer)
+          args.models_path, summary_writer=summary_writer, save_every=args.save_every)
 
 
 parser = ArgumentParser()
-parser.add_argument("--models_path", type=str, default="models/")
+parser.add_argument("--models_path", type=str, default="models_saved/")
 parser.add_argument("--save_model", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--epochs", type=int, default=10)

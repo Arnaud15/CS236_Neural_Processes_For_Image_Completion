@@ -98,10 +98,10 @@ def main(args):
 
 
 parser = ArgumentParser()
-parser.add_argument("--resume_file", type=str, default="models/NP_model_epoch_5000.pt")
+parser.add_argument("--resume_file", type=str, default="models_saved/NP_model_epoch_5000.pt")
 parser.add_argument("--bsize", type=int, default=10)
 parser.add_argument("--n_pixels", type=int, default=100)
-parser.add_argument("--n_samples", type=int, default=5, help="number of samples per context point")
+parser.add_argument("--n_samples", type=int, default=3, help="number of samples per context point")
 parser.add_argument("--mask_type", type=str, choices=["random", "upper"], default="random")
 if __name__ == '__main__':
     args = parser.parse_args()

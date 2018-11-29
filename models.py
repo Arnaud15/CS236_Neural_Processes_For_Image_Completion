@@ -48,6 +48,7 @@ class AttentionAggregator(nn.Module):
 
 
 class ContextToLatentDistribution(nn.Module):
+    # TODO use MLP instead of linear layers
     def __init__(self):
         super(ContextToLatentDistribution, self).__init__()
         self.mu_layer = nn.Linear(128, 128)
