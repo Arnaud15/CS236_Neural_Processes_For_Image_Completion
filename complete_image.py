@@ -21,17 +21,18 @@ def upper_half_mask(bsize, n_rows=14, h=28, w=28):
 def display_images(original_image, mask, reconstructed_image, h=28, w=28):
     bsize = original_image.size(0)
     original_image = original_image.view(bsize, 1, h, w).expand(-1, 3, -1, -1)
-    mask = mask.view(bsize, 1, 28, 28).expand(-1, 3, -1, -1)
+    mask = mask.view(bsize, 1, h, w).expand(-1, 3, -1, -1)
     masked_image = torch.zeros_like(original_image)
     masked_image[:, 2] = 1
     masked_image[mask == 1] = 0
     masked_image = masked_image + mask * original_image
     masked_image = torch.min(masked_image, torch.ones_like(masked_image))
     reconstructed_image = reconstructed_image.view(-1, 1, 28, 28).expand(-1, 3, h, w)
+
     stacked = torch.cat([original_image, masked_image, reconstructed_image], dim=0)
 
     grid = make_grid(stacked, nrow=bsize)
-    return np.transpose(grid.detach().numpy(), (1, 2, 0))
+    return np.transpose(grid.detach().cpu().numpy(), (1, 2, 0))
 
 
 def get_sample_images(batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, n_samples, mask=None,
@@ -47,11 +48,13 @@ def get_sample_images(batch, h, w, context_encoder, context_to_dist, decoder, n_
     else:
         mask = mask.to(device)
     context_masked = (context_full * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1, keepdim=True)
+
     z_context = torch.cat(
         [sample_z(context_to_dist(context_masked)).unsqueeze(1).expand(-1, h * w, -1) for i in range(n_samples)],
         dim=0)
+
     decoded_images = decoder(
-        torch.cat([z_context, grid.expand(n_samples, -1, -1, -1).view(-1, h * w, 2)], dim=-1))
+        torch.cat([z_context, grid.expand(n_samples, -1, -1, -1).contiguous().view(-1, h * w, 2)], dim=-1))
     output_grid = display_images(original_image=batch, mask=mask, reconstructed_image=decoded_images)
     if save:
         plt.imsave(save_file, output_grid)

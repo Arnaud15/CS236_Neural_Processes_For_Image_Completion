@@ -192,15 +192,13 @@ def main(args):
 
 
 parser = ArgumentParser()
-parser.add_argument("--resume_file", type=str, default="models_saved/NP_model_epoch_5000.pt")
+parser.add_argument("--resume_file", type=str, default="models/NP_model_epoch_490.pt")
 parser.add_argument("--bsize", type=int, default=10)
 parser.add_argument("--n_pixels", type=int, default=100)
-parser.add_argument("--n_samples", type=int, default=3, help="number of samples per context point")
-parser.add_argument("--mask_type", type=str, choices=["random", "upper"], default="random")
-parser.add_argument("--autoregressive", type=int, default=0)
+parser.add_argument("--autoregressive", type=int, default=1)
 parser.add_argument("--test_mode", type=str, choices=["sequential", "random", "highest_var"],
-                    default="random")
-parser.add_argument("--quick", type=int, default=1)
+                    default="sequential")
+parser.add_argument("--quick", type=int, default=0)
 
 if __name__ == '__main__':
     args = parser.parse_args()

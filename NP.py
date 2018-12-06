@@ -3,9 +3,6 @@ import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
-from torchvision.utils import save_image
-import numpy as np
-import os
 import time
 from argparse import ArgumentParser
 from models import *
@@ -35,7 +32,6 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
                                                                                                100 / (
                                                                                                        time.time() - last_log_time)))
                 last_log_time = time.time()
-                summary_writer.add_scalar("train/loss", running_loss / 100, batch_idx)
                 running_loss = 0.0
 
             context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
@@ -81,23 +77,62 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             train_loss += loss.item()
 
         print("Epoch train loss : {}".format(train_loss / len(train_loader)))
+        summary_writer.add_scalar("train/loss", train_loss / len(train_loader), global_step=epoch)
         if (epoch % save_every == 0) and epoch > 0:
             save_model(save_path, "NP_model_epoch_{}.pt".format(epoch), context_encoder, context_to_dist,
                        decoder,
                        device)
 
+        test_loss = 0.0
+        with torch.no_grad():
+            for batch_idx, (batch, _) in enumerate(test_loader):
+                batch = batch.to(device)
+
+                context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
+                # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
+
+                context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
+
+                mask = mask.unsqueeze(-1)  # size bsize * 784 *
+                r_masked = aggregator.forward(context_full, mask=mask, agg_dim=1)  # bsize * hidden_size
+                r_full = aggregator.forward(context_full, mask=None, agg_dim=1)
+                # print("relative diff between masked and full {:.2f}".format(torch.norm(r_masked-r_full)/torch.norm(r_full)))
+
+                ## compute loss
+                z_params_full = context_to_dist(r_full)
+                z_params_masked = context_to_dist(r_masked)
+                z_full = sample_z(z_params_full)  # size bsize * hidden
+                z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
+
+                # resize context to have one context per input coordinate
+                grid_input = grid.unsqueeze(0).expand(batch.size(0), -1, -1)
+                target_input = torch.cat([z_full, grid_input], dim=-1)
+
+                reconstructed_image = decoder.forward(target_input)
+                reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch.size(0), h * w, 1),
+                                                              reduction='none') * (1 - mask)).sum(dim=1).mean()
+
+                kl_loss = kl_normal(z_params_full, z_params_masked).mean()
+                loss = reconstruction_loss + kl_loss
+                test_loss += loss.item()
+        summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
+
         # do examples
 
-        test_batch, _ = next(iter(test_loader))[:5]
+        test_batch, _ = next(iter(test_loader))
+        test_batch = test_batch[:10]
         test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
-
         for n_pixels in [50, 150, 450]:
-            mask = random_mask(batch.size(0), n_pixels, total_pixels=784)
-            image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels,
-                                      5,
+            mask = random_mask(test_batch.size(0), n_pixels, total_pixels=784)
+
+            image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, 4,
                                       mask=mask,
                                       save=False)
-            image = torch.tensor(image)
+            image = torch.tensor(image).transpose(0,2).unsqueeze(0).transpose(2,3)
+
+            # import pdb;
+            # pdb.set_trace()
+
             summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
 
     return
@@ -155,12 +190,12 @@ parser = ArgumentParser()
 parser.add_argument("--models_path", type=str, default="models/")
 parser.add_argument("--save_model", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
-parser.add_argument("--epochs", type=int, default=10)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--bsize", type=int, default=32)
 parser.add_argument("--resume_file", type=str, default=None)
 parser.add_argument("--save_every", type=int, default=10)
 parser.add_argument("--log_dir", type=str, default="logs")
-parser.add_argument("--aggregator", type=str, choices=['mean', 'attention'], default='attention')
+parser.add_argument("--aggregator", type=str, choices=['mean', 'attention'], default='mean')
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
