@@ -9,27 +9,27 @@ import numpy as np
 def display_images(original_image, mask, reconstructed_image, h=28, w=28):
     '''
 
-    :param original_image: bsize * c
-    :param mask:
-    :param reconstructed_image:
+    :param original_image: bsize * c * h * w
+    :param mask: bsize * h * w
+    :param reconstructed_image: n_samples.bsize * h * w
     :param h:
     :param w:
     :return:
     '''
     bsize = original_image.size(0)
-    original_image = original_image.view(bsize, 1, h, w).expand(-1, 3, -1, -1)
+    original_image = original_image.view(bsize, -1, h, w).expand(-1, 3, -1, -1)
     mask = mask.view(bsize, 1, h, w).expand(-1, 3, -1, -1)
     masked_image = torch.zeros_like(original_image)
     masked_image[:, 2] = 1
     masked_image[mask == 1] = 0
     masked_image = masked_image + mask * original_image
     masked_image = torch.min(masked_image, torch.ones_like(masked_image))
-    reconstructed_image = reconstructed_image.view(-1, 1, 28, 28).expand(-1, 3, h, w)
+    reconstructed_image = reconstructed_image.view(reconstructed_image.size(0), -1, h, w).expand(-1, 3, h, w)
 
     stacked = torch.cat([original_image, masked_image, reconstructed_image], dim=0)
 
     grid = make_grid(stacked, nrow=bsize)
-    return np.transpose(grid.detach().cpu().numpy(), (1, 2, 0))
+    return grid.detach().cpu().numpy()
 
 def save_images_batch(images_batch, file_name, h=28, w=28):
     images_batch = images_batch.view(-1, 1, h, w)

@@ -135,29 +135,27 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
 
         if summary_writer is not None:
             summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
+        print("TEST loss | epoch {} | {:.2f}".format(epoch, test_loss/len(test_loader)))
 
         # do examples
 
         example_batch, _ = next(iter(test_loader))
-        example_batch = example_batch[:10]
+        example_batch = example_batch[:10].to(device)
         for n_pixels in [50, 150, 450]:
             mask = random_mask(example_batch.size(0), h, w, n_pixels, device=example_batch.device)
             z_params_full, z_params_masked = all_forward(example_batch, grid, mask, context_encoder, aggregator,
                                                          context_to_dist)
 
             z_context = torch.cat(
-                [sample_z(context_to_dist(z_params_masked)).unsqueeze(1).expand(-1, h * w, -1) for i in
+                [sample_z(z_params_masked).unsqueeze(1).expand(-1, h * w, -1) for i in
                  range(3)],
                 dim=0)
-            decoded_images = decoder(z_context).view(example_batch.size(0), h, w)
-            import pdb;
-            pdb.set_trace()
+            z_context = torch.cat([z_context, grid.view(1, h * w, 2).expand(z_context.size(0), -1, -1)], dim=2)
+            decoded_images = decoder(z_context).view(-1, 1, h, w)
             stacked_images = display_images(original_image=example_batch, mask=mask, reconstructed_image=decoded_images)
 
-            image = torch.tensor(image).transpose(0, 2).unsqueeze(0).transpose(2, 3)
+            image = torch.tensor(stacked_images)
 
-            # import pdb;
-            # pdb.set_trace()
             if summary_writer is not None:
                 summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
 
@@ -230,6 +228,7 @@ parser.add_argument("--log_dir", type=str, default="logs")
 parser.add_argument("--aggregator", type=str, choices=['mean', 'vector_attention', 'query_attention'], default='mean')
 parser.add_argument("--log", type=int, default=1)
 parser.add_argument("--seed", type=int, default=1111)
+
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
