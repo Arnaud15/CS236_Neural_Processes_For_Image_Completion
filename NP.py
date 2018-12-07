@@ -42,7 +42,7 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
 
             context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
 
-            mask = mask.unsqueeze(-1)  # size bsize * 784 *
+            mask = mask.unsqueeze(-1)
             r_masked = aggregator.forward(context_full, mask=mask, agg_dim=1)  # bsize * hidden_size
             r_full = aggregator.forward(context_full, mask=None, agg_dim=1)
             # print("relative diff between masked and full {:.2f}".format(torch.norm(r_masked-r_full)/torch.norm(r_full)))
@@ -122,26 +122,26 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
                 kl_loss = kl_normal(z_params_full, z_params_masked).mean()
                 loss = reconstruction_loss + kl_loss
                 test_loss += loss.item()
-                if summary_writer is not None:
-                    summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
+            if summary_writer is not None:
+                summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
 
-                # do examples
+            # do examples
 
-                test_batch, _ = next(iter(test_loader))
-                test_batch = test_batch[:10]
-                test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
-                for n_pixels in [50, 150, 450]:
-                    mask = random_mask(test_batch.size(0), n_pixels, total_pixels=784)
+            test_batch, _ = next(iter(test_loader))
+            test_batch = test_batch[:10]
+            test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
+            for n_pixels in [50, 150, 450]:
+                mask = random_mask(test_batch.size(0), n_pixels, total_pixels=784)
 
-                image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, 4,
-                                          mask=mask,
-                                          save=False)
-                image = torch.tensor(image).transpose(0, 2).unsqueeze(0).transpose(2, 3)
+            image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, 4,
+                                      mask=mask,
+                                      save=False)
+            image = torch.tensor(image).transpose(0, 2).unsqueeze(0).transpose(2, 3)
 
-                # import pdb;
-                # pdb.set_trace()
-                if summary_writer is not None:
-                    summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
+            # import pdb;
+            # pdb.set_trace()
+            if summary_writer is not None:
+                summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
 
     return
 
