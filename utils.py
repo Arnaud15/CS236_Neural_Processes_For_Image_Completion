@@ -108,3 +108,18 @@ def sample_z(z_params):
     sample = torch.randn(mu.shape).to(mu.device)
     z = mu + (torch.sqrt(var) * sample)
     return z
+
+
+def log_normal(x, m, v):
+    """
+    Computes the elem-wise log probability of a Gaussian and then sum over the
+    last dim. Basically we're assuming all dims are batch dims except for the
+    last dim.
+
+    Args:
+        x: tensor: (batch, ..., dim): Observation
+        m: tensor: (batch, ..., dim): Mean
+        v: tensor: (batch, ..., dim): Variance
+    """
+    log_prob = (-0.5 * (x - m).pow(2) / v -0.5 * torch.log( 2 * PI * v) ).sum( dim=-1)
+    return log_prob
