@@ -96,3 +96,34 @@ class Decoder(nn.Module):
         x = F.relu(self.layer4(x))
         x = self.layer5(x)
         return F.sigmoid(x)  # for mnist
+
+class ContextEncoderCIFAR(nn.Module):
+    def __init__(self):
+        super(ContextEncoder, self).__init__()
+        self.layer1 = nn.Linear(5, 200)
+        self.layer2 = nn.Linear(200, 200)
+        self.layer3 = nn.Linear(200, 128)
+
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        return self.layer3(x)
+
+class DecoderCIFAR(nn.Module):
+    def __init__(self):
+        super(Decoder, self).__init__()
+        self.layer1 = nn.Linear(128 + 2, 200)
+        self.layer2 = nn.Linear(200, 200)
+        self.layer3 = nn.Linear(200, 200)
+        self.layer4 = nn.Linear(200, 200)
+        self.mu = nn.Linear(200, 3)
+        self.log_var = nn.Linear(200, 3)
+
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = F.relu(self.layer3(x))
+        x = F.relu(self.layer4(x))
+        mu = self.mu(x)
+        var = torch.exp(self.log_var(x))
+        return mu, var  # for mnist
