@@ -10,7 +10,7 @@ import os
 from utils import sample_z, log_normal, make_mesh_grid, kl_normal, save_model, random_mask_uniform, random_mask, display_images, \
     load_models
 from tensorboardX import SummaryWriter
-from math import pi as PI
+
 
 
 def all_forward(batch, grid, mask, context_encoder, aggregator, context_to_dist):
@@ -50,8 +50,7 @@ def compute_loss(batch, grid, mask, z_params_full, z_params_masked, h, w, decode
     target_input = torch.cat([z_full, grid_input], dim=-1)
 
     reconstructed_image_mean, reconstructed_image_variance = decoder(target_input)  # bsize,h*w,1
-
-    reconstruction_loss = - (log_normal(batch.view(batch.size(0), h * w, 3), reconstructed_image_mean, reconstructed_image_variance) * (1 - mask.view(-1, h * w, 1))).sum(dim=1).mean()
+    reconstruction_loss = - (log_normal(batch.view(batch.size(0), h * w, 3), reconstructed_image_mean, reconstructed_image_variance) * (1 - mask.view(-1, h * w))).sum(dim=1).mean()
 
     kl_loss = kl_normal(z_params_full, z_params_masked).mean()
     return reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance
@@ -113,21 +112,21 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
         #Testing
         test_loss = 0.0
         
-            for batch_idx, (batch, _) in enumerate(test_loader):
+        for batch_idx, (batch, _) in enumerate(test_loader):
 
-                batch = batch.to(device)
-                mask = random_mask_uniform(bsize=batch.size(0), h=h, w=w, device=batch.device)
+            batch = batch.to(device)
+            mask = random_mask_uniform(bsize=batch.size(0), h=h, w=w, device=batch.device)
 
-                with torch.no_grad():
-                    z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
-                                                                 context_to_dist)
-                    reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance = compute_loss(batch, grid, mask, z_params_full,
-                                                                                     z_params_masked, h, w,
-                                                                                     decoder)
-                    loss = reconstruction_loss + kl_loss
-                    test_loss += loss.item()
+            with torch.no_grad():
+                z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
+                                                             context_to_dist)
+                reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance = compute_loss(batch, grid, mask, z_params_full,
+                                                                                 z_params_masked, h, w,
+                                                                                 decoder)
+                loss = reconstruction_loss + kl_loss
+                test_loss += loss.item()
 
-            if summary_writer is not None:
+        if summary_writer is not None:
             summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
 
         # do examples

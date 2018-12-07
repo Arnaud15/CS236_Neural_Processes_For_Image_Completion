@@ -99,7 +99,7 @@ class Decoder(nn.Module):
 
 class ContextEncoderCIFAR(nn.Module):
     def __init__(self):
-        super(ContextEncoder, self).__init__()
+        super(ContextEncoderCIFAR, self).__init__()
         self.layer1 = nn.Linear(5, 200)
         self.layer2 = nn.Linear(200, 200)
         self.layer3 = nn.Linear(200, 128)
@@ -111,7 +111,7 @@ class ContextEncoderCIFAR(nn.Module):
 
 class DecoderCIFAR(nn.Module):
     def __init__(self):
-        super(Decoder, self).__init__()
+        super(DecoderCIFAR, self).__init__()
         self.layer1 = nn.Linear(128 + 2, 200)
         self.layer2 = nn.Linear(200, 200)
         self.layer3 = nn.Linear(200, 200)
