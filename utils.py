@@ -36,7 +36,7 @@ def make_mesh_grid(h,w):
     grid = torch.tensor(np.stack([xx, yy], axis=-1)).float()
     return grid
 
-def random_sampling(batch, grid, h=28, w=28):
+def random_mask_uniform(batch_shape,device, h=28, w=28):
     '''
 
     :param batch:
@@ -46,16 +46,12 @@ def random_sampling(batch, grid, h=28, w=28):
     :return: encoder_input size (bsize,784,3) , mask size (bsize,784)
     '''
     # batch bsize * 1 * 28 * 28
-    batch_size = batch.size(0)
+    batch_size = batch_shape[0]
 
-    batch = batch.view(batch_size, -1)  # bsize * 784
-    ps = torch.rand(batch_size, device=batch.device).unsqueeze(1).expand(batch_size, h * w)
-    mask = torch.rand(batch.size(), device=batch.device)
+    ps = torch.rand(batch_size, device=device).unsqueeze(1).expand(batch_size, h * w)
+    mask = torch.rand(batch_shape, device=device)
     mask = (mask >= ps).float()  # bsize * 784
-
-    grid = grid.unsqueeze(0).expand(batch_size, h * w, 2)
-
-    return torch.cat([batch.unsqueeze(-1), grid], dim=-1), mask
+    return mask
 
 
 def kl_normal(params_p, params_q):

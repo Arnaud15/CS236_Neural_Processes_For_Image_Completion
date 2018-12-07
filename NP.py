@@ -13,7 +13,7 @@ from complete_image import get_sample_images, random_mask
 
 def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, n_epochs, device,
           save_path,
-          summary_writer, save_every=10, h=28, w=28):
+          summary_writer, save_every=10, h=28, w=28, log=1):
     context_encoder.train()
     decoder.train()
     grid = make_mesh_grid(h, w).to(device).view(h * w, 2)  # size 784*2
@@ -34,7 +34,10 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
                 last_log_time = time.time()
                 running_loss = 0.0
 
-            context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
+            mask = random_mask_uniform(batch_shape=(batch.size(0), h * w), device=batch.device, h=h, w=w)
+            context_data = torch.cat(
+                [batch.view(batch.size(0), h * w, 1), grid.unsqueeze(0).expand(batch.size(0), h * w, 2)], dim=-1)
+
             # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
 
             context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
@@ -55,7 +58,7 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             target_input = torch.cat([z_full, grid_input], dim=-1)
 
             reconstructed_image = decoder.forward(target_input)
-            if batch_idx == 0:
+            if batch_idx == 0 and log:
                 if not os.path.exists("images"):
                     os.makedirs("images")
                 save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
@@ -77,8 +80,9 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             train_loss += loss.item()
 
         print("Epoch train loss : {}".format(train_loss / len(train_loader)))
-        summary_writer.add_scalar("train/loss", train_loss / len(train_loader), global_step=epoch)
-        if (epoch % save_every == 0) and epoch > 0:
+        if summary_writer is not None:
+            summary_writer.add_scalar("train/loss", train_loss / len(train_loader), global_step=epoch)
+        if (epoch % save_every == 0) and log and epoch > 0:
             save_model(save_path, "NP_model_epoch_{}.pt".format(epoch), context_encoder, context_to_dist,
                        decoder,
                        device)
@@ -88,7 +92,10 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             for batch_idx, (batch, _) in enumerate(test_loader):
                 batch = batch.to(device)
 
-                context_data, mask = random_sampling(batch=batch, grid=grid, h=h, w=w)
+                mask = random_mask_uniform(batch_shape=(batch.size(0), h * w), device=batch.device, h=h, w=w)
+
+                context_data = torch.cat(
+                    [batch.view(batch.size(0), h * w, 1), grid.unsqueeze(0).expand(batch.size(0), h * w, 2)], dim=-1)
                 # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
 
                 context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
@@ -115,25 +122,26 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
                 kl_loss = kl_normal(z_params_full, z_params_masked).mean()
                 loss = reconstruction_loss + kl_loss
                 test_loss += loss.item()
-        summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
+                if summary_writer is not None:
+                    summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
 
-        # do examples
+                # do examples
 
-        test_batch, _ = next(iter(test_loader))
-        test_batch = test_batch[:10]
-        test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
-        for n_pixels in [50, 150, 450]:
-            mask = random_mask(test_batch.size(0), n_pixels, total_pixels=784)
+                test_batch, _ = next(iter(test_loader))
+                test_batch = test_batch[:10]
+                test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
+                for n_pixels in [50, 150, 450]:
+                    mask = random_mask(test_batch.size(0), n_pixels, total_pixels=784)
 
-            image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, 4,
-                                      mask=mask,
-                                      save=False)
-            image = torch.tensor(image).transpose(0,2).unsqueeze(0).transpose(2,3)
+                image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, 4,
+                                          mask=mask,
+                                          save=False)
+                image = torch.tensor(image).transpose(0, 2).unsqueeze(0).transpose(2, 3)
 
-            # import pdb;
-            # pdb.set_trace()
-
-            summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
+                # import pdb;
+                # pdb.set_trace()
+                if summary_writer is not None:
+                    summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
 
     return
 
@@ -141,7 +149,8 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
 def main(args):
     if not os.path.isdir(args.log_dir):
         os.makedirs(args.log_dir)
-    summary_writer = SummaryWriter(log_dir=args.log_dir)
+
+    summary_writer = SummaryWriter(log_dir=args.log_dir) if args.log else None
 
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -183,7 +192,7 @@ def main(args):
 
     train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, args.epochs,
           device,
-          args.models_path, summary_writer=summary_writer, save_every=args.save_every)
+          args.models_path, summary_writer=summary_writer, save_every=args.save_every, log=args.log)
 
 
 parser = ArgumentParser()
@@ -196,6 +205,7 @@ parser.add_argument("--resume_file", type=str, default=None)
 parser.add_argument("--save_every", type=int, default=10)
 parser.add_argument("--log_dir", type=str, default="logs")
 parser.add_argument("--aggregator", type=str, choices=['mean', 'attention'], default='mean')
+parser.add_argument("--log", type=int, default=1)
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
