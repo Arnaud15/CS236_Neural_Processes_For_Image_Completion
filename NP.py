@@ -3,6 +3,7 @@ import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
+
 import time
 from argparse import ArgumentParser
 from models import *
@@ -17,7 +18,6 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
     context_encoder.train()
     decoder.train()
     grid = make_mesh_grid(h, w).to(device).view(h * w, 2)  # size 784*2
-
     for epoch in range(n_epochs):
         running_loss = 0.0
         last_log_time = time.time()
@@ -68,7 +68,10 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
 
             kl_loss = kl_normal(z_params_full, z_params_masked).mean()
             if batch_idx % 100 == 0:
-                print("reconstruction {:.2f} | kl {:.2f}".format(reconstruction_loss, kl_loss))
+                psnr = metrics.psnr(reconstructed_image, batch)
+                cos_sim = metrics.cosine_similarity(reconstructed_image, batch)
+                ssim = metrics.ssim(reconstructed_image, batch)
+                print("reconstruction {:.2f} | kl {:.2f} | PSNR {:.2f}dB | Cosine similarity: {:.2f} | SSIM: {:.2f}".format(reconstruction_loss, kl_loss, psnr, cos_sim, ssim))
 
             loss = reconstruction_loss + kl_loss
             optimizer.zero_grad()
@@ -177,7 +180,7 @@ def main(args):
 
     if args.resume_file is not None:
         load_models(args.resume_file, context_encoder, context_to_dist, decoder)
-    context_encoder = context_encoder.to(device)
+    context_encoder = model = context_encoder.to(device)
     decoder = decoder.to(device)
     context_to_dist = context_to_dist.to(device)
     full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
