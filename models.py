@@ -30,16 +30,33 @@ class MeanAgregator(nn.Module):
             return (x * mask).sum(dim=agg_dim) / (1e-8 + mask.sum(dim=agg_dim))
 
 
-class AttentionAggregator(nn.Module):
+class VectorAttentionAggregator(nn.Module):
     def __init__(self, input_dim):
-        super(AttentionAggregator, self).__init__()
+        super(VectorAttentionAggregator, self).__init__()
+        # TODO add deeper query and key
+        self.vector = nn.Parameter(torch.zeros(input_dim))
+        self.input_dim = input_dim
+
+    def forward(self, x, mask=None, agg_dim=1):
+        keys = x
+        dot_products = (keys.matmul(self.vector)) / np.sqrt(self.input_dim)
+        dot_products = dot_products.unsqueeze(-1)
+        if mask is not None:
+            dot_products = dot_products - 1000 * mask
+
+        attention_weights = F.softmax(dot_products, dim=-2).expand(-1, -1, self.input_dim)
+
+        return (attention_weights * x).sum(-2)
+
+
+class QueryAttentionAggregator(nn.Module):
+    def __init__(self, input_dim):
+        super(QueryAttentionAggregator, self).__init__()
         # TODO add deeper query and key
         self.query = nn.Linear(input_dim, input_dim)
         self.input_dim = input_dim
 
     def forward(self, x, mask=None, agg_dim=1):
-        import pdb;
-        pdb.set_trace()
 
         keys = x
         queries = self.query(x)
@@ -62,7 +79,6 @@ class ContextToLatentDistribution(nn.Module):
 
     def forward(self, x):
         return self.mu_layer(x), self.logvar_layer(x)
-
 
 class Decoder(nn.Module):
     def __init__(self):

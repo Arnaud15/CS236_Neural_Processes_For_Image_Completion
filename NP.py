@@ -3,13 +3,61 @@ import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
-
 import time
 from argparse import ArgumentParser
 from models import *
-from utils import *
+import os
+from utils import sample_z, make_mesh_grid, kl_normal, save_model, random_mask_uniform, random_mask, display_images, \
+    load_models
 from tensorboardX import SummaryWriter
-from complete_image import get_sample_images, random_mask
+
+
+def all_forward(batch, grid, mask, context_encoder, aggregator, context_to_dist):
+    '''
+    :param batch: input batch of size bsize,c,h,w
+    :param grid: grid of size h,w,2
+    :param mask: mask of size bsize,h,w
+    :param context_encoder: model (2+c -> d)
+    :param aggregator: aggregates mask and context encodings (k*d ->d)
+    :param context_to_dist: encoded context to z distribution
+    :return: z_params_full,z_params_masked of shape (bsize,d), (bsize,d) where d is the hidden dimension of the context
+    '''
+    bsize, c, h, w = batch.size()
+
+    batch = batch.view(bsize, c, h * w).transpose(1, 2)  # bsize,h*w,c
+    grid = grid.view(h * w, -1).unsqueeze(0).expand(bsize, -1, -1)  # bsize,h*w,2
+    context_data = torch.cat([batch, grid], dim=2)
+
+    context_full = context_encoder(context_data)  # bsize,h*w,d
+
+    mask = mask.view(bsize, h * w, 1)
+    r_masked = aggregator(context_full, mask=mask, agg_dim=1)  # bsize * hidden_size
+    r_full = aggregator(context_full, mask=None, agg_dim=1)
+
+    z_params_masked = context_to_dist(r_masked)
+    z_params_full = context_to_dist(r_full)
+
+    return z_params_full, z_params_masked
+
+
+def compute_loss(batch, grid, mask, z_params_full, z_params_masked, h, w, decoder):
+    ## compute loss
+    z_full = sample_z(z_params_full)  # size bsize * hidden
+    z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
+
+    # resize context to have one context per input coordinate
+    grid_input = grid.view(1, h * w, -1).expand(batch.size(0), -1, -1)
+    target_input = torch.cat([z_full, grid_input], dim=-1)
+
+    reconstructed_image = decoder(target_input)  # bsize,h*w,1
+
+    reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch.size(0), h * w, 1),
+                                                  reduction='none') * (1 - mask.view(-1, h * w, 1))).sum(
+        dim=1).mean()
+
+    kl_loss = kl_normal(z_params_full, z_params_masked).mean()
+
+    return reconstruction_loss, kl_loss, reconstructed_image
 
 
 def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, n_epochs, device,
@@ -17,7 +65,8 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
           summary_writer, save_every=10, h=28, w=28, log=1):
     context_encoder.train()
     decoder.train()
-    grid = make_mesh_grid(h, w).to(device).view(h * w, 2)  # size 784*2
+    grid = make_mesh_grid(h, w).to(device)  # size h,w,2
+
     for epoch in range(n_epochs):
         running_loss = 0.0
         last_log_time = time.time()
@@ -34,46 +83,25 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
                 last_log_time = time.time()
                 running_loss = 0.0
 
-            mask = random_mask_uniform(batch_shape=(batch.size(0), h * w), device=batch.device, h=h, w=w)
-            context_data = torch.cat(
-                [batch.view(batch.size(0), h * w, 1), grid.unsqueeze(0).expand(batch.size(0), h * w, 2)], dim=-1)
-
-            # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
-
-            context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
-
-            mask = mask.unsqueeze(-1)
-            r_masked = aggregator.forward(context_full, mask=mask, agg_dim=1)  # bsize * hidden_size
-            r_full = aggregator.forward(context_full, mask=None, agg_dim=1)
-            # print("relative diff between masked and full {:.2f}".format(torch.norm(r_masked-r_full)/torch.norm(r_full)))
-
-            ## compute loss
-            z_params_full = context_to_dist(r_full)
-            z_params_masked = context_to_dist(r_masked)
-            z_full = sample_z(z_params_full)  # size bsize * hidden
-            z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
-
-            # resize context to have one context per input coordinate
-            grid_input = grid.unsqueeze(0).expand(batch.size(0), -1, -1)
-            target_input = torch.cat([z_full, grid_input], dim=-1)
-
-            reconstructed_image = decoder.forward(target_input)
-            if batch_idx == 0 and log:
-                if not os.path.exists("images"):
-                    os.makedirs("images")
-                save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
-                save_images_batch(reconstructed_image.cpu(), "images/reconstruct_epoch_{}".format(epoch))
-            reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch.size(0), h * w, 1),
-                                                          reduction='none') * (1 - mask)).sum(dim=1).mean()
-
-            kl_loss = kl_normal(z_params_full, z_params_masked).mean()
-            if batch_idx % 100 == 0:
-                psnr = metrics.psnr(reconstructed_image, batch)
-                cos_sim = metrics.cosine_similarity(reconstructed_image, batch)
-                ssim = metrics.ssim(reconstructed_image, batch)
-                print("reconstruction {:.2f} | kl {:.2f} | PSNR {:.2f}dB | Cosine similarity: {:.2f} | SSIM: {:.2f}".format(reconstruction_loss, kl_loss, psnr, cos_sim, ssim))
-
+            mask = random_mask_uniform(bsize=batch.size(0), h=h, w=w, device=batch.device)
+            z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
+                                                         context_to_dist)
+            reconstruction_loss, kl_loss, reconstructed_image = compute_loss(batch, grid, mask, z_params_full,
+                                                                             z_params_masked, h, w,
+                                                                             decoder)
             loss = reconstruction_loss + kl_loss
+
+            if batch_idx % 100 == 0:
+                print("reconstruction {:.2f} | kl {:.2f}".format(reconstruction_loss, kl_loss))
+
+            if batch_idx == 0 and log:
+                pass
+                # TODO tensorboard
+                # if not os.path.exists("images"):
+                #     os.makedirs("images")
+                # save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
+                # save_images_batch(reconstructed_image.cpu(), "images/reconstruct_epoch_{}".format(epoch))
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -89,56 +117,43 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             save_model(save_path, "NP_model_epoch_{}.pt".format(epoch), context_encoder, context_to_dist,
                        decoder,
                        device)
-
+        ## TEST
         test_loss = 0.0
-        with torch.no_grad():
-            for batch_idx, (batch, _) in enumerate(test_loader):
-                batch = batch.to(device)
 
-                mask = random_mask_uniform(batch_shape=(batch.size(0), h * w), device=batch.device, h=h, w=w)
+        for batch_idx, (batch, _) in enumerate(test_loader):
+            batch = batch.to(device)
 
-                context_data = torch.cat(
-                    [batch.view(batch.size(0), h * w, 1), grid.unsqueeze(0).expand(batch.size(0), h * w, 2)], dim=-1)
-                # context data size (bsize,h*w,3) with 3 = (pixel value, coord_x,coord_y)
-
-                context_full = context_encoder(context_data)  # size bsize,h*w,d with d =hidden size
-
-                mask = mask.unsqueeze(-1)  # size bsize * 784 *
-                r_masked = aggregator.forward(context_full, mask=mask, agg_dim=1)  # bsize * hidden_size
-                r_full = aggregator.forward(context_full, mask=None, agg_dim=1)
-                # print("relative diff between masked and full {:.2f}".format(torch.norm(r_masked-r_full)/torch.norm(r_full)))
-
-                ## compute loss
-                z_params_full = context_to_dist(r_full)
-                z_params_masked = context_to_dist(r_masked)
-                z_full = sample_z(z_params_full)  # size bsize * hidden
-                z_full = z_full.unsqueeze(1).expand(-1, h * w, -1)
-
-                # resize context to have one context per input coordinate
-                grid_input = grid.unsqueeze(0).expand(batch.size(0), -1, -1)
-                target_input = torch.cat([z_full, grid_input], dim=-1)
-
-                reconstructed_image = decoder.forward(target_input)
-                reconstruction_loss = (F.binary_cross_entropy(reconstructed_image, batch.view(batch.size(0), h * w, 1),
-                                                              reduction='none') * (1 - mask)).sum(dim=1).mean()
-
-                kl_loss = kl_normal(z_params_full, z_params_masked).mean()
+            mask = random_mask_uniform(bsize=batch.size(0), h=h, w=w, device=batch.device)
+            with torch.no_grad():
+                z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
+                                                             context_to_dist)
+                reconstruction_loss, kl_loss, reconstructed_image = compute_loss(batch, grid, mask, z_params_full,
+                                                                                 z_params_masked, h, w,
+                                                                                 decoder)
                 loss = reconstruction_loss + kl_loss
                 test_loss += loss.item()
-            if summary_writer is not None:
-                summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
 
-            # do examples
+        if summary_writer is not None:
+            summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
 
-            test_batch, _ = next(iter(test_loader))
-            test_batch = test_batch[:10]
-            test_batch = test_batch.view(test_batch.size(0), -1, 1).to(device)  # bsize * 784 *1
-            for n_pixels in [50, 150, 450]:
-                mask = random_mask(test_batch.size(0), n_pixels, total_pixels=784)
+        # do examples
 
-            image = get_sample_images(test_batch, h, w, context_encoder, context_to_dist, decoder, n_pixels, 4,
-                                      mask=mask,
-                                      save=False)
+        example_batch, _ = next(iter(test_loader))
+        example_batch = example_batch[:10]
+        for n_pixels in [50, 150, 450]:
+            mask = random_mask(example_batch.size(0), h, w, n_pixels, device=example_batch.device)
+            z_params_full, z_params_masked = all_forward(example_batch, grid, mask, context_encoder, aggregator,
+                                                         context_to_dist)
+
+            z_context = torch.cat(
+                [sample_z(context_to_dist(z_params_masked)).unsqueeze(1).expand(-1, h * w, -1) for i in
+                 range(3)],
+                dim=0)
+            decoded_images = decoder(z_context).view(example_batch.size(0), h, w)
+            import pdb;
+            pdb.set_trace()
+            stacked_images = display_images(original_image=example_batch, mask=mask, reconstructed_image=decoded_images)
+
             image = torch.tensor(image).transpose(0, 2).unsqueeze(0).transpose(2, 3)
 
             # import pdb;
@@ -150,6 +165,8 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
 
 
 def main(args):
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     if not os.path.isdir(args.log_dir):
         os.makedirs(args.log_dir)
 
@@ -177,21 +194,24 @@ def main(args):
     context_encoder = ContextEncoder()
     context_to_dist = ContextToLatentDistribution()
     decoder = Decoder()
+    if args.aggregator == "mean":
+        aggregator = MeanAgregator()
+    elif args.aggregator == "vector_attention":
+        aggregator = VectorAttentionAggregator(128)
+    else:
+        assert args.aggregator == "query_attention"
+        aggregator = QueryAttentionAggregator(128)
 
     if args.resume_file is not None:
         load_models(args.resume_file, context_encoder, context_to_dist, decoder)
-    context_encoder = model = context_encoder.to(device)
+    context_encoder = context_encoder.to(device)
     decoder = decoder.to(device)
     context_to_dist = context_to_dist.to(device)
-    full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
-        context_to_dist.parameters())
-    optimizer = optim.Adam(full_model_params, lr=args.lr)
+    aggregator = aggregator.to(device)
 
-    if args.aggregator == "mean":
-        aggregator = MeanAgregator()
-    else:
-        assert args.aggregator == "attention"
-        aggregator = AttentionAggregator(128)
+    full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
+        context_to_dist.parameters()) + list(aggregator.parameters())
+    optimizer = optim.Adam(full_model_params, lr=args.lr)
 
     train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, args.epochs,
           device,
@@ -207,8 +227,9 @@ parser.add_argument("--bsize", type=int, default=32)
 parser.add_argument("--resume_file", type=str, default=None)
 parser.add_argument("--save_every", type=int, default=10)
 parser.add_argument("--log_dir", type=str, default="logs")
-parser.add_argument("--aggregator", type=str, choices=['mean', 'attention'], default='mean')
+parser.add_argument("--aggregator", type=str, choices=['mean', 'vector_attention', 'query_attention'], default='mean')
 parser.add_argument("--log", type=int, default=1)
+parser.add_argument("--seed", type=int, default=1111)
 if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
