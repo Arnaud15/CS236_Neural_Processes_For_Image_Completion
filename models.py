@@ -54,18 +54,18 @@ class QueryAttentionAggregator(nn.Module):
         super(QueryAttentionAggregator, self).__init__()
         # TODO add deeper query and key
         self.query = nn.Linear(input_dim, input_dim)
+        self.vector = nn.Parameter(torch.zeros(input_dim))
         self.input_dim = input_dim
 
     def forward(self, x, mask=None, agg_dim=1):
 
-        keys = x
-        queries = self.query(x)
-
-        dot_products = (keys * queries).sum(dim=-1) / np.sqrt(self.input_dim)
+        keys = F.tanh(self.query(x))
+        dot_products = (keys.matmul(self.vector)) / np.sqrt(self.input_dim)
+        dot_products = dot_products.unsqueeze(-1)
         if mask is not None:
             dot_products = dot_products - 1000 * mask
 
-        attention_weights = F.softmax(dot_products, dim=-1).unsqueeze(-1).expand(-1, -1, self.input_dim)
+        attention_weights = F.softmax(dot_products, dim=-2).expand(-1, -1, self.input_dim)
 
         return (attention_weights * x).sum(-2)
 
@@ -100,24 +100,26 @@ class Decoder(nn.Module):
 class ContextEncoderCIFAR(nn.Module):
     def __init__(self):
         super(ContextEncoderCIFAR, self).__init__()
-        self.layer1 = nn.Linear(5, 200)
-        self.layer2 = nn.Linear(200, 200)
-        self.layer3 = nn.Linear(200, 128)
+        self.layer1 = nn.Linear(5, 400)
+        self.layer2 = nn.Linear(400, 400)
+        self.layer3 = nn.Linear(400, 400)
+        self.layer4 = nn.Linear(400, 400)
 
     def forward(self, x):
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
-        return self.layer3(x)
+        x = F.relu(self.layer3(x))
+        return self.layer4(x)
 
 class DecoderCIFAR(nn.Module):
     def __init__(self):
         super(DecoderCIFAR, self).__init__()
-        self.layer1 = nn.Linear(128 + 2, 200)
-        self.layer2 = nn.Linear(200, 200)
-        self.layer3 = nn.Linear(200, 200)
-        self.layer4 = nn.Linear(200, 200)
-        self.mu = nn.Linear(200, 3)
-        self.log_var = nn.Linear(200, 3)
+        self.layer1 = nn.Linear(400 + 2, 400)
+        self.layer2 = nn.Linear(400, 400)
+        self.layer3 = nn.Linear(400, 400)
+        self.layer4 = nn.Linear(400, 400)
+        self.mu = nn.Linear(400, 3)
+        self.log_var = nn.Linear(400, 3)
 
     def forward(self, x):
         x = F.relu(self.layer1(x))
@@ -126,4 +128,14 @@ class DecoderCIFAR(nn.Module):
         x = F.relu(self.layer4(x))
         mu = self.mu(x)
         var = torch.exp(self.log_var(x))
-        return mu, var  # for mnist
+        return mu, var
+
+class ContextToLatentDistributionCIFAR(nn.Module):
+    # TODO use MLP instead of linear layers
+    def __init__(self):
+        super(ContextToLatentDistributionCIFAR, self).__init__()
+        self.mu_layer = nn.Linear(400, 400)
+        self.logvar_layer = nn.Linear(400, 400)
+
+    def forward(self, x):
+        return self.mu_layer(x), self.logvar_layer(x)
