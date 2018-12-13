@@ -62,25 +62,30 @@ def save_images_batch(images_batch, file_name, h=28, w=28):
     plt.imsave(file_name, np.transpose(grid.detach().numpy(), (1, 2, 0)))
 
 
-def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder, device):
+def save_model(models_path, model_name, encoder, context_to_latent_dist, decoder,aggregator, device):
     file_path = os.path.join(models_path, model_name)
     if not os.path.exists(models_path):
         os.makedirs(models_path)
     model_states_dict = {"encoder": encoder.cpu().state_dict(),
                          "context_to_latent_dist": context_to_latent_dist.cpu().state_dict(),
-                         "decoder": decoder.cpu().state_dict()}
+                         "decoder": decoder.cpu().state_dict(),
+                         "aggregator":aggregator.cpu().state_dict()}
     torch.save(model_states_dict, file_path)
     encoder = encoder.to(device)
     decoder = decoder.to(device)
     context_to_latent_dist = context_to_latent_dist.to(device)
+    aggregator = aggregator.to(device)
     print('Saved state dicts to {}'.format(file_path))
 
 
-def load_models(file_path, encoder, context_to_latent_dist, decoder):
+def load_models(file_path, encoder, context_to_latent_dist, decoder,aggregator):
     dict = torch.load(file_path)
     encoder.load_state_dict(dict["encoder"])
     context_to_latent_dist.load_state_dict(dict["context_to_latent_dist"])
     decoder.load_state_dict(dict["decoder"])
+    # for compatibility
+    if "aggregator" in dict:
+        aggregator.load_state_dict(dict["aggregator"])
 
 
 def make_mesh_grid(h, w):

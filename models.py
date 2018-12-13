@@ -59,7 +59,7 @@ class QueryAttentionAggregator(nn.Module):
 
     def forward(self, x, mask=None, agg_dim=1):
 
-        keys = F.tanh(self.query(x))
+        keys = torch.sigmoid(self.query(x))
         dot_products = (keys.matmul(self.vector)) / np.sqrt(self.input_dim)
         dot_products = dot_products.unsqueeze(-1)
         if mask is not None:

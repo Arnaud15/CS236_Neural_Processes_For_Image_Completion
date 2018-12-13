@@ -1,7 +1,5 @@
-import torch
 import torch.utils.data
 from torch import nn, optim
-from torch.nn import functional as F
 from torchvision import datasets, transforms
 import time
 from argparse import ArgumentParser
@@ -94,14 +92,6 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             if batch_idx % 100 == 0:
                 print("reconstruction {:.2f} | kl {:.2f}".format(reconstruction_loss, kl_loss))
 
-            if batch_idx == 0 and log:
-                pass
-                # TODO tensorboard
-                # if not os.path.exists("images"):
-                #     os.makedirs("images")
-                # save_images_batch(batch.cpu(), "images/target_epoch_{}".format(epoch))
-                # save_images_batch(reconstructed_image.cpu(), "images/reconstruct_epoch_{}".format(epoch))
-
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -115,14 +105,13 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             summary_writer.add_scalar("train/loss", train_loss / len(train_loader), global_step=epoch)
         if (epoch % save_every == 0) and log and epoch > 0:
             save_model(save_path, "NP_model_epoch_{}.pt".format(epoch), context_encoder, context_to_dist,
-                       decoder,
+                       decoder, aggregator,
                        device)
         ## TEST
         test_loss = 0.0
 
         for batch_idx, (batch, _) in enumerate(test_loader):
             batch = batch.to(device)
-
             mask = random_mask_uniform(bsize=batch.size(0), h=h, w=w, device=batch.device)
             with torch.no_grad():
                 z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
@@ -135,7 +124,7 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
 
         if summary_writer is not None:
             summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
-        print("TEST loss | epoch {} | {:.2f}".format(epoch, test_loss/len(test_loader)))
+        print("TEST loss | epoch {} | {:.2f}".format(epoch, test_loss / len(test_loader)))
 
         # do examples
 
@@ -201,7 +190,7 @@ def main(args):
         aggregator = QueryAttentionAggregator(128)
 
     if args.resume_file is not None:
-        load_models(args.resume_file, context_encoder, context_to_dist, decoder)
+        load_models(args.resume_file, context_encoder, context_to_dist, decoder, aggregator)
     context_encoder = context_encoder.to(device)
     decoder = decoder.to(device)
     context_to_dist = context_to_dist.to(device)

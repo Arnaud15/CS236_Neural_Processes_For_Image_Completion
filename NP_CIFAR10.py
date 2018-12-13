@@ -7,10 +7,10 @@ import time
 from argparse import ArgumentParser
 from models import *
 import os
-from utils import sample_z, log_normal, make_mesh_grid, kl_normal, save_model, random_mask_uniform, random_mask, display_images, \
-    load_models
+import torchvision.utils
+from utils import sample_z, log_normal, make_mesh_grid, kl_normal, save_model, random_mask_uniform, random_mask, \
+    display_images, load_models, display_images_CIFAR
 from tensorboardX import SummaryWriter
-
 
 
 def all_forward(batch, grid, mask, context_encoder, aggregator, context_to_dist):
@@ -40,6 +40,7 @@ def all_forward(batch, grid, mask, context_encoder, aggregator, context_to_dist)
 
     return z_params_full, z_params_masked
 
+
 def compute_loss(batch, grid, mask, z_params_full, z_params_masked, h, w, decoder):
     ## compute loss
     z_full = sample_z(z_params_full)  # size bsize * hidden
@@ -50,17 +51,19 @@ def compute_loss(batch, grid, mask, z_params_full, z_params_masked, h, w, decode
     target_input = torch.cat([z_full, grid_input], dim=-1)
 
     reconstructed_image_mean, reconstructed_image_variance = decoder(target_input)  # bsize,h*w,1
-    reconstruction_loss = - (log_normal(batch.view(batch.size(0), h * w, 3), reconstructed_image_mean, reconstructed_image_variance) * (1 - mask.view(-1, h * w))).sum(dim=1).mean()
+    reconstruction_loss = - (log_normal(x=batch.view(batch.size(0), 3, h * w).transpose(1, 2), m=reconstructed_image_mean,
+                                        v=reconstructed_image_variance) * (1 - mask.view(-1, h * w))).sum(dim=1).mean()
 
     kl_loss = kl_normal(z_params_full, z_params_masked).mean()
     return reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance
+
 
 def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, n_epochs, device,
           save_path,
           summary_writer, save_every=10, h=32, w=32, log=1):
     context_encoder.train()
     decoder.train()
-    grid = make_mesh_grid(h, w).to(device).view(h * w, 2)  # size 1024*2
+    grid = make_mesh_grid(h, w).to(device)  # size h,w,2
 
     for epoch in range(n_epochs):
         running_loss = 0.0
@@ -82,15 +85,15 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
                                                          context_to_dist)
 
-            reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance = compute_loss(batch, grid, mask, z_params_full,
-                                                                             z_params_masked, h, w,
-                                                                             decoder)
+            reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance = compute_loss(batch,
+                                                                                                                grid,
+                                                                                                                mask,
+                                                                                                                z_params_full,
+                                                                                                                z_params_masked,
+                                                                                                                h, w,
+                                                                                                                decoder)
             loss = reconstruction_loss + kl_loss
-            # if batch_idx == 0 and log:
-            #     if not os.path.exists("images"):
-            #         os.makedirs("images")
-            #     save_images_batch(batch.cpu(), "images/CIFAR_target_epoch_{}".format(epoch), h=h, w=w)
-            #     save_images_batch(reconstructed_image_mean.cpu(), "images/CIFAR_reconstruct_epoch_{}".format(epoch), h=h, w=w)
+
             if batch_idx % 100 == 0:
                 print("reconstruction {:.2f} | kl {:.2f}".format(reconstruction_loss, kl_loss))
 
@@ -109,20 +112,20 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             save_model(save_path, "NP_CIFAR_model_epoch_{}.pt".format(epoch), context_encoder, context_to_dist,
                        decoder,
                        device)
-        #Testing
+        # Testing
         test_loss = 0.0
-        
-        for batch_idx, (batch, _) in enumerate(test_loader):
 
+        for batch_idx, (batch, _) in enumerate(test_loader):
             batch = batch.to(device)
             mask = random_mask_uniform(bsize=batch.size(0), h=h, w=w, device=batch.device)
 
             with torch.no_grad():
                 z_params_full, z_params_masked = all_forward(batch, grid, mask, context_encoder, aggregator,
                                                              context_to_dist)
-                reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance = compute_loss(batch, grid, mask, z_params_full,
-                                                                                 z_params_masked, h, w,
-                                                                                 decoder)
+                reconstruction_loss, kl_loss, reconstructed_image_mean, reconstructed_image_variance = compute_loss(
+                    batch, grid, mask, z_params_full,
+                    z_params_masked, h, w,
+                    decoder)
                 loss = reconstruction_loss + kl_loss
                 test_loss += loss.item()
 
@@ -130,33 +133,38 @@ def train(context_encoder, context_to_dist, decoder, aggregator, train_loader, t
             summary_writer.add_scalar("test/loss", test_loss / len(test_loader), global_step=epoch)
 
         # do examples
-        #TODO CIFAR IMAGE
-        # example_batch, _ = next(iter(test_loader))
-        # example_batch = example_batch[:10]
-        # for n_pixels in [50, 150, 450]:
-        #     mask = random_mask(example_batch.size(0), h, w, n_pixels, device=example_batch.device)
-        #     z_params_full, z_params_masked = all_forward(example_batch, grid, mask, context_encoder, aggregator,
-        #                                                  context_to_dist)
 
-        #     z_context = torch.cat(
-        #         [sample_z(context_to_dist(z_params_masked)).unsqueeze(1).expand(-1, h * w, -1) for i in
-        #          range(3)],
-        #         dim=0)
-        #     decoded_images = decoder(z_context).view(example_batch.size(0), h, w)
-        #     import pdb;
-        #     pdb.set_trace()
-        #     stacked_images = display_images(original_image=example_batch, mask=mask, reconstructed_image=decoded_images)
+        example_batch, _ = next(iter(test_loader))
+        example_batch = example_batch[:10].to(device)
+        for n_pixels in [50, 150, 450]:
+            mask = random_mask(example_batch.size(0), h, w, n_pixels, device=example_batch.device)
+            z_params_full, z_params_masked = all_forward(example_batch, grid, mask, context_encoder, aggregator,
+                                                         context_to_dist)
 
-        #     image = torch.tensor(image).transpose(0, 2).unsqueeze(0).transpose(2, 3)
+            z_context = torch.cat(
+                [sample_z(z_params_masked).unsqueeze(1).expand(-1, h * w, -1) for i in
+                 range(3)],
+                dim=0)
+            z_context = torch.cat([z_context, grid.view(1, h * w, 2).expand(z_context.size(0), -1, -1)], dim=2)
+            decoded_images_mean, decoded_images_var = decoder(z_context)
+            decoded_images_mean = decoded_images_mean.view(-1, h * w, 3).transpose(1, 2).view(-1, 3, h, w)
+            decoded_images_var = decoded_images_var.view(-1, h * w, 3).transpose(1, 2).view(-1, 3, h, w)
 
-        #     # import pdb;
-        #     # pdb.set_trace()
-        #     if summary_writer is not None:
-        #         summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
+            stacked_images = display_images_CIFAR(original_image=example_batch, image_mean=decoded_images_mean,
+                                                  image_var=decoded_images_var, mask=mask)
+
+            image = torch.tensor(stacked_images)
+
+
+            if summary_writer is not None:
+                summary_writer.add_image("test_image/{}_pixels".format(n_pixels), image, global_step=epoch)
+
     return
 
 
 def main(args):
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     if not os.path.isdir(args.log_dir):
         os.makedirs(args.log_dir)
 
@@ -168,11 +176,11 @@ def main(args):
     train_loader = torch.utils.data.DataLoader(
 
         datasets.CIFAR10('../data', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.RandomHorizontalFlip(),
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-                       ])),
+                         transform=transforms.Compose([
+                             transforms.RandomHorizontalFlip(),
+                             transforms.ToTensor(),
+                             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+                         ])),
         batch_size=args.bsize, shuffle=True)
 
     test_loader = torch.utils.data.DataLoader(
@@ -183,23 +191,26 @@ def main(args):
         batch_size=args.bsize, shuffle=True)
 
     context_encoder = ContextEncoderCIFAR()
-    context_to_dist = ContextToLatentDistribution()
+    context_to_dist = ContextToLatentDistributionCIFAR()
     decoder = DecoderCIFAR()
+    if args.aggregator == "mean":
+        aggregator = MeanAgregator()
+    elif args.aggregator == "vector_attention":
+        aggregator = VectorAttentionAggregator(400)
+    else:
+        assert args.aggregator == "query_attention"
+        aggregator = QueryAttentionAggregator(400)
 
     if args.resume_file is not None:
-        load_models(args.resume_file, context_encoder, context_to_dist, decoder)
+        load_models(args.resume_file, context_encoder, context_to_dist, decoder,aggregator)
     context_encoder = context_encoder.to(device)
     decoder = decoder.to(device)
     context_to_dist = context_to_dist.to(device)
-    full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
-        context_to_dist.parameters())
-    optimizer = optim.Adam(full_model_params, lr=args.lr)
+    aggregator = aggregator.to(device)
 
-    if args.aggregator == "mean":
-        aggregator = MeanAgregator()
-    else:
-        assert args.aggregator == "attention"
-        aggregator = AttentionAggregator(128)
+    full_model_params = list(context_encoder.parameters()) + list(decoder.parameters()) + list(
+        context_to_dist.parameters()) + list(aggregator.parameters())
+    optimizer = optim.Adam(full_model_params, lr=args.lr)
 
     train(context_encoder, context_to_dist, decoder, aggregator, train_loader, test_loader, optimizer, args.epochs,
           device,
@@ -211,12 +222,13 @@ parser.add_argument("--models_path", type=str, default="models/")
 parser.add_argument("--save_model", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--epochs", type=int, default=100)
-parser.add_argument("--bsize", type=int, default=32)
+parser.add_argument("--bsize", type=int, default=128)
 parser.add_argument("--resume_file", type=str, default=None)
 parser.add_argument("--save_every", type=int, default=10)
 parser.add_argument("--log_dir", type=str, default="logs")
-parser.add_argument("--aggregator", type=str, choices=['mean', 'attention'], default='mean')
+parser.add_argument("--aggregator", type=str, choices=['mean', 'vector_attention', 'query_attention'], default='mean')
 parser.add_argument("--log", type=int, default=1)
+parser.add_argument("--seed", type=int, default=1111)
 
 if __name__ == '__main__':
     args = parser.parse_args()

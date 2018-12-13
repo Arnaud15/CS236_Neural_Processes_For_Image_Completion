@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from models import *
 from torchvision import datasets, transforms
 
-
+#TODO make it up to date with NP and NP_CIFAR10
 def main(args):
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
