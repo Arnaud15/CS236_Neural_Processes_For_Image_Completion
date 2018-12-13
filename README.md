@@ -18,3 +18,6 @@ To train on CIFAR10, run `python NP_CIFAR10.py`.
 Once you have a saved model in `models_saved/NP_model_epoch_x`, you can run `python complete_image_MNIST.py --resume_file models_saved/NP_model_epoch_x --mask_type upper` to generate image completions with the upper half of the image masked.
 
 The code `test.py` was used to generate metrics in the report and should not be used.
+
+This project was part of the course CS236 Deep Generative Models taught at Stanford University.
+https://deepgenerativemodels.github.io/
