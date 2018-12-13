@@ -1,1 +1,3 @@
-# CS236_Deep_Generative_Processes
+# CS236 Deep Generative Processes
+# Neural Processes for Image Completion
+# Amaury Sabran, Arnaud Autef, Benjamin Petit
