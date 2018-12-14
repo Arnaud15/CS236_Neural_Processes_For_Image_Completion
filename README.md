@@ -10,7 +10,7 @@ task and discuss their performance on two well-known datasets: MNIST and
 CIFAR10.
 
 For more details about Neural Processes, see https://arxiv.org/abs/1807.01613 and https://arxiv.org/abs/1807.01622.
-For more details about the project, see `report.pdf`.
+For more details about the project, see the [project report](report.pdf).
 
 To train a neural process on MNIST, run `python NP.py`. You can visualize the training and sample reconstructed images with tensorboard.
 To train on CIFAR10, run `python NP_CIFAR10.py`.
